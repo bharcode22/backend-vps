@@ -114,24 +114,24 @@ const streamStorage = {
   _handleFile(req, file, cb) {
     const { downloadSessionId } = req.params;
     const pending = pendingDownloads.get(downloadSessionId);
-    
+
     if (!pending) {
       return cb(new Error('Session download tidak ditemukan atau kadaluarsa'));
     }
-    
+
     const { res: browserRes, timer, fileName } = pending;
     clearTimeout(timer);
-    
+
     console.log(`🚀 (Multipart) Mengalirkan file "${fileName}" dari Android langsung ke Browser (Session: ${downloadSessionId})...`);
-    
+
     file.stream.pipe(browserRes);
-    
+
     file.stream.on('end', () => {
       console.log(`✅ (Multipart) Transfer file selesai untuk session: ${downloadSessionId}`);
       pendingDownloads.delete(downloadSessionId);
       cb(null, { status: 'success' });
     });
-    
+
     file.stream.on('error', (err) => {
       console.error(`❌ (Multipart) Error transfer: ${err.message}`);
       browserRes.end('Error saat mengunduh file.');
@@ -149,7 +149,7 @@ const upload = multer({ storage: streamStorage });
 // 4. POST /api/upload-stream/:downloadSessionId - Endpoint untuk Android mengirim stream file
 router.post('/upload-stream/:downloadSessionId', (req, res) => {
   const contentType = req.headers['content-type'] || '';
-  
+
   if (contentType.includes('multipart/form-data')) {
     // Jalankan multer parser untuk mengalirkan file multipart
     upload.single('file')(req, res, (err) => {
