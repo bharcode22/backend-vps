@@ -1,0 +1,29 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model Device {
+  id        String   @id @db.VarChar(100)
+  status    String   @default("offline") @db.VarChar(20)
+  lastSeen  DateTime @default(now()) @map("last_seen") @db.Timestamp()
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamp()
+
+  @@map("devices")
+}
+
+model AccessLog {
+  id         Int      @id @default(autoincrement())
+  deviceId   String?  @map("device_id") @db.VarChar(100)
+  fileName   String?  @map("file_name") @db.VarChar(255)
+  action     String?  @db.VarChar(50)
+  accessTime DateTime @default(now()) @map("access_time") @db.Timestamp()
+
+  @@map("access_logs")
+}
