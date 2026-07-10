@@ -132,7 +132,7 @@ const streamStorage = {
         console.log(`✅ (Multipart) Sukses menyimpan file di VPS: ${targetDiskPath}`);
         pendingDownloads.delete(downloadSessionId);
         cb(null, { status: 'success' });
-        
+
         // Kirim respon sukses ke pemanggil awal
         browserRes.json({
           status: 'success',
@@ -146,7 +146,7 @@ const streamStorage = {
 
       file.stream.on('error', (err) => {
         console.error(`❌ (Multipart) Gagal menyimpan ke disk VPS: ${err.message}`);
-        fs.unlink(targetDiskPath, () => {}); // Hapus file parsial jika gagal
+        fs.unlink(targetDiskPath, () => { }); // Hapus file parsial jika gagal
         pendingDownloads.delete(downloadSessionId);
         cb(err);
         browserRes.status(500).json({ error: 'Gagal menulis file ke disk VPS', details: err.message });
@@ -211,7 +211,7 @@ router.post('/upload-stream/:downloadSessionId', (req, res) => {
         console.log(`✅ (Raw) Sukses menyimpan file di VPS: ${targetDiskPath}`);
         pendingDownloads.delete(downloadSessionId);
         res.status(200).json({ status: 'success', message: 'File saved successfully on VPS (raw)' });
-        
+
         // Kirim respon sukses ke pemanggil awal
         browserRes.json({
           status: 'success',
@@ -225,14 +225,14 @@ router.post('/upload-stream/:downloadSessionId', (req, res) => {
 
       req.on('error', (err) => {
         console.error(`❌ (Raw) Gagal menyimpan ke disk VPS:`, err.message);
-        fs.unlink(targetDiskPath, () => {});
+        fs.unlink(targetDiskPath, () => { });
         pendingDownloads.delete(downloadSessionId);
         res.status(500).json({ error: 'Stream interrupted' });
         browserRes.status(500).json({ error: 'Gagal menulis file ke disk VPS', details: err.message });
       });
     } else {
       console.log(`🚀 (Raw) Mengalirkan data file "${fileName}" dari Android langsung ke Browser (Session: ${downloadSessionId})`);
-      
+
       // Pipe stream request dari Android langsung ke response Browser
       req.pipe(browserRes);
 
