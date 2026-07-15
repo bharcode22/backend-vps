@@ -346,4 +346,113 @@ router.post('/upload', authenticateApiKey, uploadToDisk.single('file'), (req, re
   });
 });
 
+// 7. GET /api/devices/:deviceId/preview - Inisiasi stream preview terkompresi
+router.get('/devices/:deviceId/preview', authenticateApiKey, async (req, res) => {
+  const { deviceId } = req.params;
+  const filePath = req.query.path;
+
+  if (!filePath) {
+    return res.status(400).json({ error: 'Query parameter "path" diperlukan' });
+  }
+
+  const fileName = path.basename(filePath);
+  const fileExtension = path.extname(filePath).toLowerCase();
+
+  // Tentukan MIME type yang cocok untuk gambar agar dirender inline
+  let contentType = 'image/jpeg';
+  if (fileExtension === '.png') {
+    contentType = 'image/png';
+  } else if (fileExtension === '.gif') {
+    contentType = 'image/gif';
+  } else if (fileExtension === '.webp') {
+    contentType = 'image/webp';
+  }
+
+  const downloadSessionId = crypto.randomBytes(16).toString('hex');
+
+  console.log(`👁️  Browser meminta preview: "${filePath}" (Session: ${downloadSessionId})`);
+
+  // Set header untuk menampilkan secara inline di browser
+  res.setHeader('Content-Disposition', 'inline');
+  res.setHeader('Content-Type', contentType);
+
+  // Set timeout 30 detik. Jika HP tidak merespon/kirim file, batalkan request.
+  const timer = setTimeout(() => {
+    if (pendingDownloads.has(downloadSessionId)) {
+      console.warn(`⏳ Preview session ${downloadSessionId} timeout.`);
+      const pending = pendingDownloads.get(downloadSessionId);
+      pending.res.status(504).end('Gateway Timeout: Perangkat tidak mengirimkan preview.');
+      pendingDownloads.delete(downloadSessionId);
+    }
+  }, 30000);
+
+  // Simpan response object browser agar bisa di-pipe nanti
+  pendingDownloads.set(downloadSessionId, { res, timer, fileName });
+
+  try {
+    // Kirim instruksi ke HP Android untuk mengompres & mengirim preview
+    await socketModule.sendDeviceCommand(deviceId, 'GET_PREVIEW', {
+      path: filePath,
+      downloadSessionId
+    });
+
+    // Catat ke log akses
+    await db.logAccess(deviceId, fileName, 'PREVIEW_FILE');
+  } catch (err) {
+    console.error(`❌ Gagal mengirim perintah GET_PREVIEW ke device: ${err.message}`);
+    clearTimeout(timer);
+    pendingDownloads.delete(downloadSessionId);
+
+    // Kirim status error
+    res.status(500).end(`Gagal memuat preview gambar: ${err.message}`);
+  }
+});
+
+// 8. GET /api/files/months - Mengambil daftar bulan yang tersedia dari berkas JSON hasil split
+router.get('/files/months', authenticateApiKey, (req, res) => {
+  const dirPath = path.join(__dirname, 'json-management', 'split-monthly-camera');
+
+  try {
+    if (!fs.existsSync(dirPath)) {
+      return res.json([]);
+    }
+
+    const files = fs.readdirSync(dirPath);
+    const months = files
+      .filter(file => file.endsWith('.json'))
+      .map(file => file.replace('.json', ''))
+      .sort((a, b) => b.localeCompare(a)); // Urutkan terbaru dahulu (descending)
+
+    res.json(months);
+  } catch (err) {
+    console.error('❌ Gagal membaca daftar bulan:', err.message);
+    res.status(500).json({ error: 'Gagal mengambil daftar bulan', details: err.message });
+  }
+});
+
+// 9. GET /api/files/monthly/:month - Mengambil data file untuk bulan tertentu
+router.get('/files/monthly/:month', authenticateApiKey, (req, res) => {
+  const { month } = req.params;
+
+  // Validasi input untuk mencegah directory traversal attack
+  if (!/^\d{4}-\d{2}$/.test(month)) {
+    return res.status(400).json({ error: 'Format bulan tidak valid. Harus format YYYY-MM' });
+  }
+
+  const filePath = path.join(__dirname, 'json-management', 'split-monthly-camera', `${month}.json`);
+
+  try {
+    if (!fs.existsSync(filePath)) {
+      return res.status(404).json({ error: `Data untuk bulan ${month} tidak ditemukan` });
+    }
+
+    const rawData = fs.readFileSync(filePath, 'utf8');
+    const data = JSON.parse(rawData);
+    res.json(data);
+  } catch (err) {
+    console.error(`❌ Gagal membaca data bulan ${month}:`, err.message);
+    res.status(500).json({ error: 'Gagal mengambil data bulanan', details: err.message });
+  }
+});
+
 module.exports = router;
