@@ -221,6 +221,13 @@ var require_routes = __commonJS({
       try {
         console.log(`\u{1F50D} Meminta daftar file folder "${folder}" dari device ${deviceId}`);
         const files = await socketModule2.sendDeviceCommand(deviceId, "LIST_FILES", { folder });
+        if (Array.isArray(files)) {
+          files.sort((a, b) => {
+            const timeA = a.mtime ? new Date(a.mtime).getTime() : 0;
+            const timeB = b.mtime ? new Date(b.mtime).getTime() : 0;
+            return timeB - timeA;
+          });
+        }
         await db2.logAccess(deviceId, folder, "LIST_FILES");
         res.json(files);
       } catch (err) {
@@ -517,6 +524,13 @@ var require_routes = __commonJS({
         }
         const rawData = fs.readFileSync(filePath, "utf8");
         const data = JSON.parse(rawData);
+        if (Array.isArray(data)) {
+          data.sort((a, b) => {
+            const timeA = a.mtime ? new Date(a.mtime).getTime() : 0;
+            const timeB = b.mtime ? new Date(b.mtime).getTime() : 0;
+            return timeB - timeA;
+          });
+        }
         res.json(data);
       } catch (err) {
         console.error(`\u274C Gagal membaca data bulan ${month}:`, err.message);

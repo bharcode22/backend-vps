@@ -49,6 +49,15 @@ router.get('/devices/:deviceId/files', authenticateApiKey, async (req, res) => {
     console.log(`🔍 Meminta daftar file folder "${folder}" dari device ${deviceId}`);
     const files = await socketModule.sendDeviceCommand(deviceId, 'LIST_FILES', { folder });
 
+    // Urutkan file berdasarkan mtime (modified time) secara descending (terbaru paling atas)
+    if (Array.isArray(files)) {
+      files.sort((a, b) => {
+        const timeA = a.mtime ? new Date(a.mtime).getTime() : 0;
+        const timeB = b.mtime ? new Date(b.mtime).getTime() : 0;
+        return timeB - timeA;
+      });
+    }
+
     // Catat ke log akses
     await db.logAccess(deviceId, folder, 'LIST_FILES');
 
@@ -448,6 +457,16 @@ router.get('/files/monthly/:month', authenticateApiKey, (req, res) => {
 
     const rawData = fs.readFileSync(filePath, 'utf8');
     const data = JSON.parse(rawData);
+
+    // Urutkan arsip bulanan berdasarkan mtime (modified time) secara descending (terbaru paling atas)
+    if (Array.isArray(data)) {
+      data.sort((a, b) => {
+        const timeA = a.mtime ? new Date(a.mtime).getTime() : 0;
+        const timeB = b.mtime ? new Date(b.mtime).getTime() : 0;
+        return timeB - timeA;
+      });
+    }
+
     res.json(data);
   } catch (err) {
     console.error(`❌ Gagal membaca data bulan ${month}:`, err.message);
