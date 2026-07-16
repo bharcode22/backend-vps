@@ -3,12 +3,12 @@ FROM node:18-slim AS builder
 
 WORKDIR /app
 
-# Copy dependency files
-COPY package*.json ./
+# Copy package file only (ignores lockfile to avoid OS mismatch)
+COPY package.json ./
 COPY prisma ./prisma
 
-# Install all dependencies (development + production)
-RUN npm install
+# Install all dependencies (development + production) with verbose logging
+RUN npm install --verbose
 
 # Copy source code
 COPY . .
@@ -32,7 +32,7 @@ ENV NODE_ENV=production
 # Copy built application and pruned node_modules from builder
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/node_modules ./node_modules
-COPY --from=builder /app/package*.json ./
+COPY --from=builder /app/package.json ./
 COPY --from=builder /app/prisma ./prisma
 
 # Expose server port
