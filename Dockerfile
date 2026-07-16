@@ -1,5 +1,5 @@
 # Stage 1: Build stage
-FROM node:18-slim AS builder
+FROM node:20-slim AS builder
 
 WORKDIR /app
 
@@ -20,7 +20,7 @@ RUN npm run build
 RUN npm prune --omit=dev
 
 # Stage 2: Production runner stage
-FROM node:18-slim AS runner
+FROM node:20-slim AS runner
 
 # Install openssl for Prisma compatibility
 RUN apt-get update && apt-get install -y openssl && rm -rf /var/lib/apt/lists/*
