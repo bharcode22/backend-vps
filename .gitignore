@@ -2,3 +2,5 @@
 /generated/prisma
 .env
 json-management
+uploads
+/uploads
