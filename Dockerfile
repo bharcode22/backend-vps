@@ -36,7 +36,7 @@ COPY --from=builder /app/package.json ./
 COPY --from=builder /app/prisma ./prisma
 
 # Expose server port
-EXPOSE 3000
+EXPOSE 3001
 
 # Start server
 CMD ["node", "dist/server.js"]
