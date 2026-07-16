@@ -158,9 +158,71 @@ async function previewDeviceFile(req, res) {
     contentType = 'image/webp';
   }
 
+  // 1. Ekstrak folder dari path
+  let folder = 'DCIM';
+  const prefix = '/storage/emulated/0/';
+  if (filePath.startsWith(prefix)) {
+    const relative = filePath.substring(prefix.length);
+    folder = path.dirname(relative);
+  } else {
+    const parent = path.dirname(filePath);
+    folder = parent.startsWith('/') ? parent.substring(1) : parent;
+  }
+
+  // 2. Cari mtime dari cache all.json
+  let mtime = null;
+  try {
+    const uploadDir = process.env.UPLOAD_DIR || './uploads';
+    const allFilePath = path.join(uploadDir, `${deviceId}-${folder}`, 'all.json');
+    if (fs.existsSync(allFilePath)) {
+      const files = JSON.parse(fs.readFileSync(allFilePath, 'utf8'));
+      const foundFile = files.find(f => f.path === filePath || f.name === fileName);
+      if (foundFile) {
+        mtime = foundFile.mtime || foundFile.fileMtime;
+      }
+    }
+  } catch (e) {}
+
+  // 3. Format nama folder berdasarkan mtime
+  let dateStr = 'no-date';
+  if (mtime) {
+    try {
+      const d = new Date(mtime);
+      if (!isNaN(d.getTime())) {
+        const localYear = d.getFullYear();
+        const localMonth = String(d.getMonth() + 1).padStart(2, '0');
+        const localDay = String(d.getDate()).padStart(2, '0');
+        dateStr = `${localYear}-${localMonth}-${localDay}`;
+      }
+    } catch (e) {}
+  } else {
+    // Fallback ke tanggal saat ini
+    const d = new Date();
+    const localYear = d.getFullYear();
+    const localMonth = String(d.getMonth() + 1).padStart(2, '0');
+    const localDay = String(d.getDate()).padStart(2, '0');
+    dateStr = `${localYear}-${localMonth}-${localDay}`;
+  }
+
+  // 4. Pastikan folder mtime ada
+  const uploadDir = process.env.UPLOAD_DIR || './uploads';
+  const dateDir = path.join(uploadDir, `${deviceId}-${folder}`, dateStr);
+  if (!fs.existsSync(dateDir)) {
+    fs.mkdirSync(dateDir, { recursive: true });
+  }
+
+  // 5. Tentukan nama berkas hasil preview (jika bukan ekstensi gambar, simpan sebagai .jpg)
+  const isImgExt = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.heic', '.bmp'].includes(fileExtension);
+  let previewFileName = fileName;
+  if (!isImgExt) {
+    previewFileName = `${fileName}.jpg`;
+  }
+  const targetDiskPath = path.join(dateDir, previewFileName);
+
   const downloadSessionId = crypto.randomBytes(16).toString('hex');
 
   console.log(`👁️  Browser meminta preview: "${filePath}" (Session: ${downloadSessionId})`);
+  console.log(`💾 Preview akan disimpan di VPS: ${targetDiskPath}`);
 
   res.setHeader('Content-Disposition', 'inline');
   res.setHeader('Content-Type', contentType);
@@ -174,7 +236,15 @@ async function previewDeviceFile(req, res) {
     }
   }, 30000);
 
-  pendingDownloads.set(downloadSessionId, { res, timer, fileName });
+  // Set saveToDisk dan targetDiskPath agar sekaligus menyimpan file hasil stream ke VPS disk
+  pendingDownloads.set(downloadSessionId, { 
+    res, 
+    timer, 
+    fileName, 
+    saveToDisk: true, 
+    targetDiskPath, 
+    isStreamResponse: true 
+  });
 
   try {
     await socketModule.sendDeviceCommand(deviceId, 'GET_PREVIEW', {
@@ -221,7 +291,7 @@ async function fetchDeviceFileToVps(req, res) {
     }
   }, 30000);
 
-  pendingDownloads.set(downloadSessionId, { res, timer, fileName, saveToDisk: true, targetDiskPath });
+  pendingDownloads.set(downloadSessionId, { res, timer, fileName, saveToDisk: true, targetDiskPath, isJsonResponse: true });
 
   try {
     await socketModule.sendDeviceCommand(deviceId, 'GET_FILE', {

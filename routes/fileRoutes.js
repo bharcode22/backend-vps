@@ -21,4 +21,10 @@ router.get('/files/json-list', authenticateApiKey, fileController.getJsonList);
 // GET /api/files/json-get - Membaca isi berkas JSON cache spesifik di VPS
 router.get('/files/json-get', authenticateApiKey, fileController.getJsonContent);
 
+// GET /api/vps/files - Menampilkan daftar berkas fisik terkompresi yang tersimpan di VPS
+router.get('/vps/files', authenticateApiKey, fileController.getVpsFiles);
+
+// GET /api/vps/files/download - Mengunduh berkas fisik terkompresi langsung dari VPS disk
+router.get('/vps/files/download', authenticateApiKey, fileController.downloadVpsFile);
+
 module.exports = router;

@@ -13,7 +13,7 @@ const streamStorage = {
       return cb(new Error('Session download tidak ditemukan atau kadaluarsa'));
     }
 
-    const { res: browserRes, timer, fileName, saveToDisk, targetDiskPath } = pending;
+    const { res: browserRes, timer, fileName, saveToDisk, targetDiskPath, isJsonResponse, isStreamResponse } = pending;
     clearTimeout(timer);
 
     if (saveToDisk && targetDiskPath) {
@@ -21,20 +21,28 @@ const streamStorage = {
       const writeStream = fs.createWriteStream(targetDiskPath);
       file.stream.pipe(writeStream);
 
+      // Jika minta stream langsung ke browser (misal preview/download)
+      if (isStreamResponse && browserRes) {
+        console.log(`🚀 (Multipart) Sekaligus mengalirkan file "${fileName}" ke Browser (Session: ${downloadSessionId})...`);
+        file.stream.pipe(browserRes);
+      }
+
       file.stream.on('end', () => {
         console.log(`✅ (Multipart) Sukses menyimpan file di VPS: ${targetDiskPath}`);
         pendingDownloads.delete(downloadSessionId);
         cb(null, { status: 'success' });
 
-        // Kirim respon sukses ke pemanggil awal
-        browserRes.json({
-          status: 'success',
-          message: 'File berhasil diambil dari perangkat dan disimpan di VPS',
-          file: {
-            originalName: fileName,
-            path: targetDiskPath
-          }
-        });
+        if (isJsonResponse && browserRes) {
+          // Kirim respon sukses ke pemanggil awal
+          browserRes.json({
+            status: 'success',
+            message: 'File berhasil diambil dari perangkat dan disimpan di VPS',
+            file: {
+              originalName: fileName,
+              path: targetDiskPath
+            }
+          });
+        }
       });
 
       file.stream.on('error', (err) => {
@@ -42,7 +50,13 @@ const streamStorage = {
         fs.unlink(targetDiskPath, () => { }); // Hapus file parsial jika gagal
         pendingDownloads.delete(downloadSessionId);
         cb(err);
-        browserRes.status(500).json({ error: 'Gagal menulis file ke disk VPS', details: err.message });
+        if (browserRes) {
+          if (isJsonResponse) {
+            browserRes.status(500).json({ error: 'Gagal menulis file ke disk VPS', details: err.message });
+          } else {
+            browserRes.end('Error saat mengunduh file.');
+          }
+        }
       });
     } else {
       console.log(`🚀 (Multipart) Mengalirkan file "${fileName}" dari Android langsung ke Browser (Session: ${downloadSessionId})...`);

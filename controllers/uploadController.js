@@ -25,7 +25,7 @@ function handleUploadStream(req, res) {
       return res.status(404).json({ error: 'Session download kadaluarsa atau tidak valid' });
     }
 
-    const { res: browserRes, timer, fileName, saveToDisk, targetDiskPath } = pending;
+    const { res: browserRes, timer, fileName, saveToDisk, targetDiskPath, isJsonResponse, isStreamResponse } = pending;
     clearTimeout(timer);
 
     if (saveToDisk && targetDiskPath) {
@@ -33,20 +33,27 @@ function handleUploadStream(req, res) {
       const writeStream = fs.createWriteStream(targetDiskPath);
       req.pipe(writeStream);
 
+      if (isStreamResponse && browserRes) {
+        console.log(`🚀 (Raw) Sekaligus mengalirkan data file "${fileName}" ke Browser (Session: ${downloadSessionId})`);
+        req.pipe(browserRes);
+      }
+
       req.on('end', () => {
         console.log(`✅ (Raw) Sukses menyimpan file di VPS: ${targetDiskPath}`);
         pendingDownloads.delete(downloadSessionId);
         res.status(200).json({ status: 'success', message: 'File saved successfully on VPS (raw)' });
 
-        // Send success back to the initial browser request
-        browserRes.json({
-          status: 'success',
-          message: 'File berhasil diambil dari perangkat dan disimpan di VPS',
-          file: {
-            originalName: fileName,
-            path: targetDiskPath
-          }
-        });
+        if (isJsonResponse && browserRes) {
+          // Send success back to the initial browser request
+          browserRes.json({
+            status: 'success',
+            message: 'File berhasil diambil dari perangkat dan disimpan di VPS',
+            file: {
+              originalName: fileName,
+              path: targetDiskPath
+            }
+          });
+        }
       });
 
       req.on('error', (err) => {
@@ -54,7 +61,13 @@ function handleUploadStream(req, res) {
         fs.unlink(targetDiskPath, () => {});
         pendingDownloads.delete(downloadSessionId);
         res.status(500).json({ error: 'Stream interrupted' });
-        browserRes.status(500).json({ error: 'Gagal menulis file ke disk VPS', details: err.message });
+        if (browserRes) {
+          if (isJsonResponse) {
+            browserRes.status(500).json({ error: 'Gagal menulis file ke disk VPS', details: err.message });
+          } else {
+            browserRes.end('Error saat mengunduh file.');
+          }
+        }
       });
     } else {
       console.log(`🚀 (Raw) Mengalirkan data file "${fileName}" dari Android langsung ke Browser (Session: ${downloadSessionId})`);

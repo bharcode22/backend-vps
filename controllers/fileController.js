@@ -175,6 +175,42 @@ async function previewFileCached(req, res) {
     const deviceFilePath = targetFile.path;
     const fileExtension = path.extname(name).toLowerCase();
 
+    // 1. Format nama folder berdasarkan mtime
+    const mtime = targetFile.mtime || targetFile.fileMtime;
+    let dateStr = 'no-date';
+    if (mtime) {
+      try {
+        const d = new Date(mtime);
+        if (!isNaN(d.getTime())) {
+          const localYear = d.getFullYear();
+          const localMonth = String(d.getMonth() + 1).padStart(2, '0');
+          const localDay = String(d.getDate()).padStart(2, '0');
+          dateStr = `${localYear}-${localMonth}-${localDay}`;
+        }
+      } catch (e) {}
+    } else {
+      // Fallback ke tanggal saat ini
+      const d = new Date();
+      const localYear = d.getFullYear();
+      const localMonth = String(d.getMonth() + 1).padStart(2, '0');
+      const localDay = String(d.getDate()).padStart(2, '0');
+      dateStr = `${localYear}-${localMonth}-${localDay}`;
+    }
+
+    // 2. Pastikan folder mtime ada
+    const dateDir = path.join(targetDir, dateStr);
+    if (!fs.existsSync(dateDir)) {
+      fs.mkdirSync(dateDir, { recursive: true });
+    }
+
+    // 3. Tentukan nama berkas hasil preview (jika bukan ekstensi gambar, simpan sebagai .jpg)
+    const isImgExt = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.heic', '.bmp'].includes(fileExtension);
+    let previewFileName = name;
+    if (!isImgExt) {
+      previewFileName = `${name}.jpg`;
+    }
+    const targetDiskPath = path.join(dateDir, previewFileName);
+
     let contentType = 'image/jpeg';
     if (fileExtension === '.png') contentType = 'image/png';
     else if (fileExtension === '.gif') contentType = 'image/gif';
@@ -182,6 +218,7 @@ async function previewFileCached(req, res) {
 
     const downloadSessionId = crypto.randomBytes(16).toString('hex');
     console.log(`👁️  Meminta preview berkas dari perangkat: "${deviceFilePath}" (Session: ${downloadSessionId})`);
+    console.log(`💾 Preview akan disimpan di VPS: ${targetDiskPath}`);
 
     res.setHeader('Content-Disposition', 'inline');
     res.setHeader('Content-Type', contentType);
@@ -195,7 +232,15 @@ async function previewFileCached(req, res) {
       }
     }, 30000);
 
-    pendingDownloads.set(downloadSessionId, { res, timer, fileName: name });
+    // Set saveToDisk dan targetDiskPath agar sekaligus menyimpan file hasil stream ke VPS disk
+    pendingDownloads.set(downloadSessionId, { 
+      res, 
+      timer, 
+      fileName: name, 
+      saveToDisk: true, 
+      targetDiskPath, 
+      isStreamResponse: true 
+    });
 
     await socketModule.sendDeviceCommand(activeDeviceId, 'GET_PREVIEW', {
       path: deviceFilePath,
@@ -366,11 +411,122 @@ async function getJsonContent(req, res) {
   }
 }
 
+// 7. GET /api/vps/files - Menampilkan daftar berkas fisik terkompresi yang tersimpan di VPS
+async function getVpsFiles(req, res) {
+  const folder = req.query.folder || 'DCIM/Camera';
+  const { deviceId } = req.query;
+
+  let activeDeviceId = deviceId;
+  if (!activeDeviceId) {
+    const activeDevices = socketModule.getActiveDevicesList();
+    if (activeDevices.length > 0) {
+      activeDeviceId = activeDevices[0];
+    }
+  }
+
+  if (!activeDeviceId) {
+    try {
+      const dbDevices = await db.getDevices();
+      if (dbDevices && dbDevices.length > 0) {
+        activeDeviceId = dbDevices[0].id;
+      }
+    } catch (e) { }
+  }
+
+  if (!activeDeviceId) {
+    return res.status(400).json({ error: 'Device ID tidak ditemukan.' });
+  }
+
+  const uploadDir = process.env.UPLOAD_DIR || './uploads';
+  const targetDir = path.join(uploadDir, `${activeDeviceId}-${folder}`);
+
+  if (!fs.existsSync(targetDir)) {
+    return res.json([]);
+  }
+
+  try {
+    const list = [];
+    const items = fs.readdirSync(targetDir);
+    for (const item of items) {
+      const itemPath = path.join(targetDir, item);
+      const stat = fs.statSync(itemPath);
+      if (stat.isDirectory()) {
+        const files = fs.readdirSync(itemPath);
+        for (const filename of files) {
+          const filePath = path.join(itemPath, filename);
+          const fileStat = fs.statSync(filePath);
+          if (fileStat.isFile()) {
+            list.push({
+              name: filename,
+              date: item, // e.g. "2026-01-26"
+              size: fileStat.size,
+              mtime: fileStat.mtime,
+              relativePath: `${item}/${filename}`
+            });
+          }
+        }
+      }
+    }
+
+    // Urutkan berdasarkan waktu modifikasi (mtime) descending (terbaru paling atas)
+    list.sort((a, b) => new Date(b.mtime) - new Date(a.mtime));
+
+    res.json(list);
+  } catch (err) {
+    res.status(500).json({ error: 'Gagal membaca berkas di VPS.', details: err.message });
+  }
+}
+
+// 8. GET /api/vps/files/download - Mengunduh berkas fisik terkompresi langsung dari VPS disk
+function downloadVpsFile(req, res) {
+  const folder = req.query.folder || 'DCIM/Camera';
+  const { deviceId, date, name } = req.query;
+
+  if (!date || !name) {
+    return res.status(400).json({ error: 'Parameter "date" dan "name" diperlukan.' });
+  }
+
+  let activeDeviceId = deviceId;
+  if (!activeDeviceId) {
+    const activeDevices = socketModule.getActiveDevicesList();
+    if (activeDevices.length > 0) {
+      activeDeviceId = activeDevices[0];
+    }
+  }
+
+  if (!activeDeviceId) {
+    return res.status(400).json({ error: 'Device ID tidak ditemukan.' });
+  }
+
+  const uploadDir = process.env.UPLOAD_DIR || './uploads';
+  const filePath = path.resolve(uploadDir, `${activeDeviceId}-${folder}`, date, name);
+
+  // Pencegahan directory traversal attack
+  if (!filePath.startsWith(path.resolve(uploadDir))) {
+    return res.status(403).json({ error: 'Akses tidak diperbolehkan.' });
+  }
+
+  if (!fs.existsSync(filePath)) {
+    return res.status(404).json({ error: 'Berkas tidak ditemukan di VPS.' });
+  }
+
+  const inline = req.query.inline === 'true';
+  if (!inline) {
+    res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(name)}"`);
+  } else {
+    res.setHeader('Content-Disposition', 'inline');
+  }
+
+  res.sendFile(filePath);
+}
+
 module.exports = {
   getFiles,
   getFileMetadata,
   previewFileCached,
   downloadFileCached,
   getJsonList,
-  getJsonContent
+  getJsonContent,
+  getVpsFiles,
+  downloadVpsFile
 };
