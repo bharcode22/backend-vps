@@ -44,10 +44,11 @@ router.get('/devices', authenticateApiKey, async (req, res) => {
 router.get('/devices/:deviceId/files', authenticateApiKey, async (req, res) => {
   const { deviceId } = req.params;
   const folder = req.query.folder || 'DCIM';
+  const { date } = req.query; // format: YYYY-MM-DD
 
   try {
     console.log(`🔍 Meminta daftar file folder "${folder}" dari device ${deviceId}`);
-    const files = await socketModule.sendDeviceCommand(deviceId, 'LIST_FILES', { folder });
+    let files = await socketModule.sendDeviceCommand(deviceId, 'LIST_FILES', { folder });
 
     // Urutkan file berdasarkan mtime (modified time) secara descending (terbaru paling atas)
     if (Array.isArray(files)) {
@@ -56,6 +57,30 @@ router.get('/devices/:deviceId/files', authenticateApiKey, async (req, res) => {
         const timeB = b.mtime ? new Date(b.mtime).getTime() : 0;
         return timeB - timeA;
       });
+
+      // Filter berdasarkan tanggal jika parameter date disediakan
+      if (date) {
+        files = files.filter(file => {
+          if (!file.mtime) return false;
+          try {
+            const d = new Date(file.mtime);
+            if (isNaN(d.getTime())) return false;
+            
+            // Format ke YYYY-MM-DD UTC
+            const isoDate = d.toISOString().split('T')[0];
+            
+            // Format ke YYYY-MM-DD Local
+            const localYear = d.getFullYear();
+            const localMonth = String(d.getMonth() + 1).padStart(2, '0');
+            const localDay = String(d.getDate()).padStart(2, '0');
+            const localDateStr = `${localYear}-${localMonth}-${localDay}`;
+            
+            return isoDate === date || localDateStr === date;
+          } catch (e) {
+            return false;
+          }
+        });
+      }
     }
 
     // Catat ke log akses
