@@ -900,6 +900,37 @@ var require_fileController = __commonJS({
       }
       res.sendFile(filePath);
     }
+    async function deleteVpsFile(req, res) {
+      const folder = req.query.folder || "DCIM/Camera";
+      const { deviceId, date, name } = req.query;
+      if (!date || !name) {
+        return res.status(400).json({ error: 'Parameter "date" dan "name" diperlukan.' });
+      }
+      let activeDeviceId = deviceId;
+      if (!activeDeviceId) {
+        return res.status(400).json({ error: "Device ID diperlukan." });
+      }
+      const uploadDir = process.env.UPLOAD_DIR || "./uploads";
+      const filePath = path.resolve(uploadDir, `${activeDeviceId}-${folder}`, date, name);
+      if (!filePath.startsWith(path.resolve(uploadDir))) {
+        return res.status(403).json({ error: "Akses tidak diperbolehkan." });
+      }
+      if (!fs.existsSync(filePath)) {
+        return res.status(404).json({ error: "Berkas tidak ditemukan di VPS." });
+      }
+      try {
+        fs.unlinkSync(filePath);
+        console.log(`\u{1F5D1}\uFE0F Berkas dihapus dari VPS disk: ${filePath}`);
+        const dirPath = path.dirname(filePath);
+        if (fs.readdirSync(dirPath).length === 0) {
+          fs.rmdirSync(dirPath);
+          console.log(`\u{1F5D1}\uFE0F Folder kosong dihapus dari VPS: ${dirPath}`);
+        }
+        res.json({ status: "success", message: "Berkas berhasil dihapus dari VPS" });
+      } catch (err) {
+        res.status(500).json({ error: "Gagal menghapus berkas dari VPS.", details: err.message });
+      }
+    }
     module2.exports = {
       getFiles,
       getFileMetadata,
@@ -908,7 +939,8 @@ var require_fileController = __commonJS({
       getJsonList,
       getJsonContent,
       getVpsFiles,
-      downloadVpsFile
+      downloadVpsFile,
+      deleteVpsFile
     };
   }
 });
@@ -928,6 +960,7 @@ var require_fileRoutes = __commonJS({
     router.get("/files/json-get", authenticateApiKey, fileController.getJsonContent);
     router.get("/vps/files", authenticateApiKey, fileController.getVpsFiles);
     router.get("/vps/files/download", authenticateApiKey, fileController.downloadVpsFile);
+    router.delete("/vps/files", authenticateApiKey, fileController.deleteVpsFile);
     module2.exports = router;
   }
 });

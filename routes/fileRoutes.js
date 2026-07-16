@@ -27,4 +27,7 @@ router.get('/vps/files', authenticateApiKey, fileController.getVpsFiles);
 // GET /api/vps/files/download - Mengunduh berkas fisik terkompresi langsung dari VPS disk
 router.get('/vps/files/download', authenticateApiKey, fileController.downloadVpsFile);
 
+// DELETE /api/vps/files - Menghapus berkas fisik terkompresi dari VPS disk
+router.delete('/vps/files', authenticateApiKey, fileController.deleteVpsFile);
+
 module.exports = router;

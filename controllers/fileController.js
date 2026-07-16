@@ -520,6 +520,49 @@ function downloadVpsFile(req, res) {
   res.sendFile(filePath);
 }
 
+// 9. DELETE /api/vps/files - Menghapus berkas fisik terkompresi dari VPS disk
+async function deleteVpsFile(req, res) {
+  const folder = req.query.folder || 'DCIM/Camera';
+  const { deviceId, date, name } = req.query;
+
+  if (!date || !name) {
+    return res.status(400).json({ error: 'Parameter "date" dan "name" diperlukan.' });
+  }
+
+  let activeDeviceId = deviceId;
+  if (!activeDeviceId) {
+    return res.status(400).json({ error: 'Device ID diperlukan.' });
+  }
+
+  const uploadDir = process.env.UPLOAD_DIR || './uploads';
+  const filePath = path.resolve(uploadDir, `${activeDeviceId}-${folder}`, date, name);
+
+  // Pencegahan directory traversal attack
+  if (!filePath.startsWith(path.resolve(uploadDir))) {
+    return res.status(403).json({ error: 'Akses tidak diperbolehkan.' });
+  }
+
+  if (!fs.existsSync(filePath)) {
+    return res.status(404).json({ error: 'Berkas tidak ditemukan di VPS.' });
+  }
+
+  try {
+    fs.unlinkSync(filePath);
+    console.log(`🗑️ Berkas dihapus dari VPS disk: ${filePath}`);
+
+    // Jika direktori tanggal kosong setelah berkas dihapus, hapus direktori tersebut
+    const dirPath = path.dirname(filePath);
+    if (fs.readdirSync(dirPath).length === 0) {
+      fs.rmdirSync(dirPath);
+      console.log(`🗑️ Folder kosong dihapus dari VPS: ${dirPath}`);
+    }
+
+    res.json({ status: 'success', message: 'Berkas berhasil dihapus dari VPS' });
+  } catch (err) {
+    res.status(500).json({ error: 'Gagal menghapus berkas dari VPS.', details: err.message });
+  }
+}
+
 module.exports = {
   getFiles,
   getFileMetadata,
@@ -528,5 +571,6 @@ module.exports = {
   getJsonList,
   getJsonContent,
   getVpsFiles,
-  downloadVpsFile
+  downloadVpsFile,
+  deleteVpsFile
 };
