@@ -36,7 +36,7 @@ async function getDeviceFiles(req, res) {
 
     // Urutkan file berdasarkan mtime (modified time) secara descending (terbaru paling atas)
     if (Array.isArray(files)) {
-      // Simpan respon ke VPS local storage dalam bentuk JSON berkelompok per tanggal (device_id-DCIM/Camera/tgl)
+      // Simpan respon ke VPS local storage dalam bentuk JSON (cukup all.json saja)
       try {
         const uploadDir = process.env.UPLOAD_DIR || './uploads';
         const targetDir = path.join(uploadDir, `${deviceId}-${folder}`);
@@ -48,33 +48,6 @@ async function getDeviceFiles(req, res) {
         const allFilePath = path.join(targetDir, 'all.json');
         fs.writeFileSync(allFilePath, JSON.stringify(files, null, 2), 'utf8');
         console.log(`💾 Sukses menyimpan seluruh response di VPS: ${allFilePath}`);
-
-        const groups = {};
-        for (const file of files) {
-          let dateStr = 'no-date';
-          if (file.mtime) {
-            try {
-              const d = new Date(file.mtime);
-              if (!isNaN(d.getTime())) {
-                const localYear = d.getFullYear();
-                const localMonth = String(d.getMonth() + 1).padStart(2, '0');
-                const localDay = String(d.getDate()).padStart(2, '0');
-                dateStr = `${localYear}-${localMonth}-${localDay}`;
-              }
-            } catch (e) {}
-          }
-
-          if (!groups[dateStr]) {
-            groups[dateStr] = [];
-          }
-          groups[dateStr].push(file);
-        }
-
-        for (const [dateStr, groupFiles] of Object.entries(groups)) {
-          const filePath = path.join(targetDir, `${dateStr}.json`);
-          fs.writeFileSync(filePath, JSON.stringify(groupFiles, null, 2), 'utf8');
-          console.log(`💾 Sukses menyimpan cache JSON di VPS: ${filePath} (${groupFiles.length} berkas)`);
-        }
       } catch (saveErr) {
         console.error('❌ Gagal menyimpan cache JSON berkas di VPS:', saveErr.message);
       }

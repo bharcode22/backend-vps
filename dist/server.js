@@ -230,31 +230,6 @@ var require_deviceController = __commonJS({
             const allFilePath = path.join(targetDir, "all.json");
             fs.writeFileSync(allFilePath, JSON.stringify(files, null, 2), "utf8");
             console.log(`\u{1F4BE} Sukses menyimpan seluruh response di VPS: ${allFilePath}`);
-            const groups = {};
-            for (const file of files) {
-              let dateStr = "no-date";
-              if (file.mtime) {
-                try {
-                  const d = new Date(file.mtime);
-                  if (!isNaN(d.getTime())) {
-                    const localYear = d.getFullYear();
-                    const localMonth = String(d.getMonth() + 1).padStart(2, "0");
-                    const localDay = String(d.getDate()).padStart(2, "0");
-                    dateStr = `${localYear}-${localMonth}-${localDay}`;
-                  }
-                } catch (e) {
-                }
-              }
-              if (!groups[dateStr]) {
-                groups[dateStr] = [];
-              }
-              groups[dateStr].push(file);
-            }
-            for (const [dateStr, groupFiles] of Object.entries(groups)) {
-              const filePath = path.join(targetDir, `${dateStr}.json`);
-              fs.writeFileSync(filePath, JSON.stringify(groupFiles, null, 2), "utf8");
-              console.log(`\u{1F4BE} Sukses menyimpan cache JSON di VPS: ${filePath} (${groupFiles.length} berkas)`);
-            }
           } catch (saveErr) {
             console.error("\u274C Gagal menyimpan cache JSON berkas di VPS:", saveErr.message);
           }
@@ -480,25 +455,26 @@ var require_fileController = __commonJS({
       }
       let files = [];
       try {
+        const allFilePath = path.join(targetDir, "all.json");
+        if (fs.existsSync(allFilePath)) {
+          files = JSON.parse(fs.readFileSync(allFilePath, "utf8"));
+        }
         if (date) {
-          const filePath = path.join(targetDir, `${date}.json`);
-          if (fs.existsSync(filePath)) {
-            files = JSON.parse(fs.readFileSync(filePath, "utf8"));
-          }
-        } else {
-          const allFilePath = path.join(targetDir, "all.json");
-          if (fs.existsSync(allFilePath)) {
-            files = JSON.parse(fs.readFileSync(allFilePath, "utf8"));
-          } else {
-            const fileNames = fs.readdirSync(targetDir).filter((name) => name.endsWith(".json") && name !== "all.json");
-            for (const name of fileNames) {
-              const filePath = path.join(targetDir, name);
-              const content = JSON.parse(fs.readFileSync(filePath, "utf8"));
-              if (Array.isArray(content)) {
-                files = files.concat(content);
-              }
+          files = files.filter((file) => {
+            if (!file.mtime) return false;
+            try {
+              const d = new Date(file.mtime);
+              if (isNaN(d.getTime())) return false;
+              const isoDate = d.toISOString().split("T")[0];
+              const localYear = d.getFullYear();
+              const localMonth = String(d.getMonth() + 1).padStart(2, "0");
+              const localDay = String(d.getDate()).padStart(2, "0");
+              const localDateStr = `${localYear}-${localMonth}-${localDay}`;
+              return isoDate === date || localDateStr === date;
+            } catch (e) {
+              return false;
             }
-          }
+          });
         }
         files.sort((a, b) => {
           const timeA = a.mtime ? new Date(a.mtime).getTime() : 0;
@@ -540,17 +516,12 @@ var require_fileController = __commonJS({
         return res.status(404).json({ error: "Cache daftar berkas untuk folder ini belum tersedia." });
       }
       try {
-        const fileNames = fs.readdirSync(targetDir).filter((name2) => name2.endsWith(".json"));
-        let foundFile = null;
-        for (const jsonName of fileNames) {
-          const filePath = path.join(targetDir, jsonName);
-          const files = JSON.parse(fs.readFileSync(filePath, "utf8"));
-          const file = files.find((f) => f.name === name);
-          if (file) {
-            foundFile = file;
-            break;
-          }
+        const allFilePath = path.join(targetDir, "all.json");
+        if (!fs.existsSync(allFilePath)) {
+          return res.status(404).json({ error: "Cache daftar berkas untuk folder ini belum tersedia." });
         }
+        const files = JSON.parse(fs.readFileSync(allFilePath, "utf8"));
+        const foundFile = files.find((f) => f.name === name);
         if (!foundFile) {
           return res.status(404).json({ error: `Berkas "${name}" tidak ditemukan di dalam cache.` });
         }
@@ -580,17 +551,12 @@ var require_fileController = __commonJS({
         return res.status(404).json({ error: "Cache daftar berkas belum tersedia. Akses /devices/:deviceId/files terlebih dahulu." });
       }
       try {
-        const fileNames = fs.readdirSync(targetDir).filter((name2) => name2.endsWith(".json"));
-        let targetFile = null;
-        for (const jsonName of fileNames) {
-          const filePath = path.join(targetDir, jsonName);
-          const files = JSON.parse(fs.readFileSync(filePath, "utf8"));
-          const file = files.find((f) => f.name === name);
-          if (file) {
-            targetFile = file;
-            break;
-          }
+        const allFilePath = path.join(targetDir, "all.json");
+        if (!fs.existsSync(allFilePath)) {
+          return res.status(404).json({ error: "Cache daftar berkas belum tersedia. Akses /devices/:deviceId/files terlebih dahulu." });
         }
+        const files = JSON.parse(fs.readFileSync(allFilePath, "utf8"));
+        const targetFile = files.find((f) => f.name === name);
         if (!targetFile) {
           return res.status(404).json({ error: `Berkas "${name}" tidak ditemukan.` });
         }
@@ -643,17 +609,12 @@ var require_fileController = __commonJS({
         return res.status(404).json({ error: "Cache daftar berkas belum tersedia. Akses /devices/:deviceId/files terlebih dahulu." });
       }
       try {
-        const fileNames = fs.readdirSync(targetDir).filter((name2) => name2.endsWith(".json"));
-        let targetFile = null;
-        for (const jsonName of fileNames) {
-          const filePath = path.join(targetDir, jsonName);
-          const files = JSON.parse(fs.readFileSync(filePath, "utf8"));
-          const file = files.find((f) => f.name === name);
-          if (file) {
-            targetFile = file;
-            break;
-          }
+        const allFilePath = path.join(targetDir, "all.json");
+        if (!fs.existsSync(allFilePath)) {
+          return res.status(404).json({ error: "Cache daftar berkas belum tersedia. Akses /devices/:deviceId/files terlebih dahulu." });
         }
+        const files = JSON.parse(fs.readFileSync(allFilePath, "utf8"));
+        const targetFile = files.find((f) => f.name === name);
         if (!targetFile) {
           return res.status(404).json({ error: `Berkas "${name}" tidak ditemukan.` });
         }

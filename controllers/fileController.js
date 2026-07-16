@@ -25,7 +25,7 @@ async function getFiles(req, res) {
       if (dbDevices && dbDevices.length > 0) {
         activeDeviceId = dbDevices[0].id;
       }
-    } catch (e) {}
+    } catch (e) { }
   }
 
   if (!activeDeviceId) {
@@ -41,27 +41,29 @@ async function getFiles(req, res) {
 
   let files = [];
   try {
+    // Baca all.json
+    const allFilePath = path.join(targetDir, 'all.json');
+    if (fs.existsSync(allFilePath)) {
+      files = JSON.parse(fs.readFileSync(allFilePath, 'utf8'));
+    }
+
+    // Jika filter tanggal dikirim, saring secara in-memory
     if (date) {
-      // Baca file JSON tanggal spesifik (filter tgl)
-      const filePath = path.join(targetDir, `${date}.json`);
-      if (fs.existsSync(filePath)) {
-        files = JSON.parse(fs.readFileSync(filePath, 'utf8'));
-      }
-    } else {
-      // Jika filter tanggal kosong, baca dari all.json jika ada, jika tidak ada gabungkan semua file
-      const allFilePath = path.join(targetDir, 'all.json');
-      if (fs.existsSync(allFilePath)) {
-        files = JSON.parse(fs.readFileSync(allFilePath, 'utf8'));
-      } else {
-        const fileNames = fs.readdirSync(targetDir).filter(name => name.endsWith('.json') && name !== 'all.json');
-        for (const name of fileNames) {
-          const filePath = path.join(targetDir, name);
-          const content = JSON.parse(fs.readFileSync(filePath, 'utf8'));
-          if (Array.isArray(content)) {
-            files = files.concat(content);
-          }
+      files = files.filter(file => {
+        if (!file.mtime) return false;
+        try {
+          const d = new Date(file.mtime);
+          if (isNaN(d.getTime())) return false;
+          const isoDate = d.toISOString().split('T')[0];
+          const localYear = d.getFullYear();
+          const localMonth = String(d.getMonth() + 1).padStart(2, '0');
+          const localDay = String(d.getDate()).padStart(2, '0');
+          const localDateStr = `${localYear}-${localMonth}-${localDay}`;
+          return isoDate === date || localDateStr === date;
+        } catch (e) {
+          return false;
         }
-      }
+      });
     }
 
     // Urutkan mtime descending
@@ -98,7 +100,7 @@ async function getFileMetadata(req, res) {
       if (dbDevices && dbDevices.length > 0) {
         activeDeviceId = dbDevices[0].id;
       }
-    } catch (e) {}
+    } catch (e) { }
   }
 
   if (!activeDeviceId) {
@@ -113,18 +115,13 @@ async function getFileMetadata(req, res) {
   }
 
   try {
-    const fileNames = fs.readdirSync(targetDir).filter(name => name.endsWith('.json'));
-    let foundFile = null;
-
-    for (const jsonName of fileNames) {
-      const filePath = path.join(targetDir, jsonName);
-      const files = JSON.parse(fs.readFileSync(filePath, 'utf8'));
-      const file = files.find(f => f.name === name);
-      if (file) {
-        foundFile = file;
-        break;
-      }
+    const allFilePath = path.join(targetDir, 'all.json');
+    if (!fs.existsSync(allFilePath)) {
+      return res.status(404).json({ error: 'Cache daftar berkas untuk folder ini belum tersedia.' });
     }
+
+    const files = JSON.parse(fs.readFileSync(allFilePath, 'utf8'));
+    const foundFile = files.find(f => f.name === name);
 
     if (!foundFile) {
       return res.status(404).json({ error: `Berkas "${name}" tidak ditemukan di dalam cache.` });
@@ -163,18 +160,13 @@ async function previewFileCached(req, res) {
   }
 
   try {
-    const fileNames = fs.readdirSync(targetDir).filter(name => name.endsWith('.json'));
-    let targetFile = null;
-
-    for (const jsonName of fileNames) {
-      const filePath = path.join(targetDir, jsonName);
-      const files = JSON.parse(fs.readFileSync(filePath, 'utf8'));
-      const file = files.find(f => f.name === name);
-      if (file) {
-        targetFile = file;
-        break;
-      }
+    const allFilePath = path.join(targetDir, 'all.json');
+    if (!fs.existsSync(allFilePath)) {
+      return res.status(404).json({ error: 'Cache daftar berkas belum tersedia. Akses /devices/:deviceId/files terlebih dahulu.' });
     }
+
+    const files = JSON.parse(fs.readFileSync(allFilePath, 'utf8'));
+    const targetFile = files.find(f => f.name === name);
 
     if (!targetFile) {
       return res.status(404).json({ error: `Berkas "${name}" tidak ditemukan.` });
@@ -243,18 +235,13 @@ async function downloadFileCached(req, res) {
   }
 
   try {
-    const fileNames = fs.readdirSync(targetDir).filter(name => name.endsWith('.json'));
-    let targetFile = null;
-
-    for (const jsonName of fileNames) {
-      const filePath = path.join(targetDir, jsonName);
-      const files = JSON.parse(fs.readFileSync(filePath, 'utf8'));
-      const file = files.find(f => f.name === name);
-      if (file) {
-        targetFile = file;
-        break;
-      }
+    const allFilePath = path.join(targetDir, 'all.json');
+    if (!fs.existsSync(allFilePath)) {
+      return res.status(404).json({ error: 'Cache daftar berkas belum tersedia. Akses /devices/:deviceId/files terlebih dahulu.' });
     }
+
+    const files = JSON.parse(fs.readFileSync(allFilePath, 'utf8'));
+    const targetFile = files.find(f => f.name === name);
 
     if (!targetFile) {
       return res.status(404).json({ error: `Berkas "${name}" tidak ditemukan.` });
@@ -309,7 +296,7 @@ async function getJsonList(req, res) {
       if (dbDevices && dbDevices.length > 0) {
         activeDeviceId = dbDevices[0].id;
       }
-    } catch (e) {}
+    } catch (e) { }
   }
 
   if (!activeDeviceId) {
@@ -356,7 +343,7 @@ async function getJsonContent(req, res) {
       if (dbDevices && dbDevices.length > 0) {
         activeDeviceId = dbDevices[0].id;
       }
-    } catch (e) {}
+    } catch (e) { }
   }
 
   if (!activeDeviceId) {
