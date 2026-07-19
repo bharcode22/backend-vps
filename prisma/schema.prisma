@@ -27,3 +27,12 @@ model AccessLog {
 
   @@map("access_logs")
 }
+
+model User {
+  id        Int      @id @default(autoincrement())
+  username  String   @unique @db.VarChar(100)
+  password  String   @db.VarChar(255)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamp()
+
+  @@map("users")
+}

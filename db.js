@@ -10,6 +10,7 @@ let dbEnabled = false;
 // In-memory fallback structures
 const memoryDevices = new Map();
 const memoryLogs = [];
+const memoryUsers = new Map();
 
 // Helper untuk menyelaraskan properti camelCase (Prisma) dan snake_case (Legacy/Postgres)
 function formatDevice(device) {
@@ -118,10 +119,56 @@ async function logAccess(deviceId, fileName, action) {
   memoryLogs.push({ deviceId, fileName, action, accessTime });
 }
 
+// Helper untuk user management (Autentikasi)
+async function createUser(username, passwordHash) {
+  if (dbEnabled && prisma) {
+    try {
+      return await prisma.user.create({
+        data: {
+          username,
+          password: passwordHash
+        }
+      });
+    } catch (err) {
+      console.error('Error saat menyimpan user ke database (Prisma):', err.message);
+      throw err;
+    }
+  }
+
+  // Fallback in-memory
+  const id = memoryUsers.size + 1;
+  const user = {
+    id,
+    username,
+    password: passwordHash,
+    createdAt: new Date()
+  };
+  memoryUsers.set(username, user);
+  return user;
+}
+
+async function findUserByUsername(username) {
+  if (dbEnabled && prisma) {
+    try {
+      return await prisma.user.findUnique({
+        where: { username }
+      });
+    } catch (err) {
+      console.error('Error saat mencari user di database (Prisma):', err.message);
+      throw err;
+    }
+  }
+
+  // Fallback in-memory
+  return memoryUsers.get(username) || null;
+}
+
 module.exports = {
   initDb,
   upsertDevice,
   getDevices,
   logAccess,
+  createUser,
+  findUserByUsername,
   isDbEnabled: () => dbEnabled
 };

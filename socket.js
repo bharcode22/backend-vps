@@ -1,7 +1,9 @@
 const { Server } = require('socket.io');
+const jwt = require('jsonwebtoken');
 const db = require('./db');
 
 const apiKey = process.env.API_KEY || 'super-secret-key-123';
+const JWT_SECRET = process.env.JWT_SECRET || 'kasir-vps-secure-jwt-key-2026';
 const activeDevices = new Map(); // Map untuk menyimpan deviceId -> socket instance
 
 function initSocket(server) {
@@ -16,11 +18,25 @@ function initSocket(server) {
   io.use((socket, next) => {
     const token = socket.handshake.auth?.token || socket.handshake.query?.token;
 
-    if (token !== apiKey) {
-      console.warn(`⚠️  Koneksi Socket ditolak karena token salah dari IP: ${socket.handshake.address}`);
-      return next(new Error('Unauthorized: Token invalid'));
+    // 1. Cek jika menggunakan static API Key
+    if (token === apiKey) {
+      return next();
     }
-    next();
+
+    // 2. Coba verifikasi dengan JWT jika token tersedia
+    if (token) {
+      try {
+        const decoded = jwt.verify(token, JWT_SECRET);
+        socket.user = decoded;
+        return next();
+      } catch (err) {
+        console.warn(`⚠️  Koneksi Socket ditolak karena JWT tidak valid dari IP: ${socket.handshake.address}`);
+        return next(new Error('Unauthorized: JWT invalid'));
+      }
+    }
+
+    console.warn(`⚠️  Koneksi Socket ditolak karena tanpa token dari IP: ${socket.handshake.address}`);
+    return next(new Error('Unauthorized: Token missing'));
   });
 
   io.on('connection', (socket) => {

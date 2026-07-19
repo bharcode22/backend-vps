@@ -15,6 +15,7 @@ var require_db = __commonJS({
     var dbEnabled = false;
     var memoryDevices = /* @__PURE__ */ new Map();
     var memoryLogs = [];
+    var memoryUsers = /* @__PURE__ */ new Map();
     function formatDevice(device) {
       if (!device) return null;
       const lastSeen = device.lastSeen || device.last_seen;
@@ -101,11 +102,50 @@ var require_db = __commonJS({
       }
       memoryLogs.push({ deviceId, fileName, action, accessTime });
     }
+    async function createUser(username, passwordHash) {
+      if (dbEnabled && prisma) {
+        try {
+          return await prisma.user.create({
+            data: {
+              username,
+              password: passwordHash
+            }
+          });
+        } catch (err) {
+          console.error("Error saat menyimpan user ke database (Prisma):", err.message);
+          throw err;
+        }
+      }
+      const id = memoryUsers.size + 1;
+      const user = {
+        id,
+        username,
+        password: passwordHash,
+        createdAt: /* @__PURE__ */ new Date()
+      };
+      memoryUsers.set(username, user);
+      return user;
+    }
+    async function findUserByUsername(username) {
+      if (dbEnabled && prisma) {
+        try {
+          return await prisma.user.findUnique({
+            where: { username }
+          });
+        } catch (err) {
+          console.error("Error saat mencari user di database (Prisma):", err.message);
+          throw err;
+        }
+      }
+      return memoryUsers.get(username) || null;
+    }
     module2.exports = {
       initDb,
       upsertDevice,
       getDevices,
       logAccess,
+      createUser,
+      findUserByUsername,
       isDbEnabled: () => dbEnabled
     };
   }
@@ -115,8 +155,10 @@ var require_db = __commonJS({
 var require_socket = __commonJS({
   "socket.js"(exports2, module2) {
     var { Server } = require("socket.io");
+    var jwt = require("jsonwebtoken");
     var db2 = require_db();
     var apiKey = process.env.API_KEY || "super-secret-key-123";
+    var JWT_SECRET = process.env.JWT_SECRET || "kasir-vps-secure-jwt-key-2026";
     var activeDevices = /* @__PURE__ */ new Map();
     function initSocket(server2) {
       const io = new Server(server2, {
@@ -128,11 +170,21 @@ var require_socket = __commonJS({
       });
       io.use((socket, next) => {
         const token = socket.handshake.auth?.token || socket.handshake.query?.token;
-        if (token !== apiKey) {
-          console.warn(`\u26A0\uFE0F  Koneksi Socket ditolak karena token salah dari IP: ${socket.handshake.address}`);
-          return next(new Error("Unauthorized: Token invalid"));
+        if (token === apiKey) {
+          return next();
         }
-        next();
+        if (token) {
+          try {
+            const decoded = jwt.verify(token, JWT_SECRET);
+            socket.user = decoded;
+            return next();
+          } catch (err) {
+            console.warn(`\u26A0\uFE0F  Koneksi Socket ditolak karena JWT tidak valid dari IP: ${socket.handshake.address}`);
+            return next(new Error("Unauthorized: JWT invalid"));
+          }
+        }
+        console.warn(`\u26A0\uFE0F  Koneksi Socket ditolak karena tanpa token dari IP: ${socket.handshake.address}`);
+        return next(new Error("Unauthorized: Token missing"));
       });
       io.on("connection", (socket) => {
         const clientType = socket.handshake.query?.clientType;
@@ -180,6 +232,89 @@ var require_socket = __commonJS({
       sendDeviceCommand,
       getActiveDevicesList
     };
+  }
+});
+
+// controllers/authController.js
+var require_authController = __commonJS({
+  "controllers/authController.js"(exports2, module2) {
+    var bcrypt = require("bcryptjs");
+    var jwt = require("jsonwebtoken");
+    var db2 = require_db();
+    var JWT_SECRET = process.env.JWT_SECRET || "kasir-vps-secure-jwt-key-2026";
+    async function register(req, res) {
+      const { username, password } = req.body;
+      if (!username || !password) {
+        return res.status(400).json({ error: "Username dan password diperlukan." });
+      }
+      try {
+        const existingUser = await db2.findUserByUsername(username);
+        if (existingUser) {
+          return res.status(400).json({ error: "Username sudah digunakan." });
+        }
+        const salt = await bcrypt.genSalt(10);
+        const passwordHash = await bcrypt.hash(password, salt);
+        const newUser = await db2.createUser(username, passwordHash);
+        res.status(201).json({
+          status: "success",
+          message: "Registrasi berhasil.",
+          user: {
+            id: newUser.id,
+            username: newUser.username
+          }
+        });
+      } catch (err) {
+        res.status(500).json({ error: "Gagal melakukan registrasi.", details: err.message });
+      }
+    }
+    async function login(req, res) {
+      const { username, password } = req.body;
+      if (!username || !password) {
+        return res.status(400).json({ error: "Username dan password diperlukan." });
+      }
+      try {
+        const user = await db2.findUserByUsername(username);
+        if (!user) {
+          return res.status(401).json({ error: "Username atau password salah." });
+        }
+        const isMatch = await bcrypt.compare(password, user.password);
+        if (!isMatch) {
+          return res.status(401).json({ error: "Username atau password salah." });
+        }
+        const token = jwt.sign(
+          { id: user.id, username: user.username },
+          JWT_SECRET,
+          { expiresIn: "7d" }
+        );
+        res.json({
+          status: "success",
+          message: "Login berhasil.",
+          token,
+          user: {
+            id: user.id,
+            username: user.username
+          }
+        });
+      } catch (err) {
+        res.status(500).json({ error: "Gagal melakukan login.", details: err.message });
+      }
+    }
+    module2.exports = {
+      register,
+      login
+    };
+  }
+});
+
+// routes/authRoutes.js
+var require_authRoutes = __commonJS({
+  "routes/authRoutes.js"(exports2, module2) {
+    var express2 = require("express");
+    var router = express2.Router();
+    var authController = require_authController();
+    router.post("/register", authController.register);
+    router.post("/login", authController.login);
+    module2.exports = router;
   }
 });
 
@@ -446,16 +581,31 @@ var require_deviceController = __commonJS({
 // middlewares/auth.js
 var require_auth = __commonJS({
   "middlewares/auth.js"(exports2, module2) {
+    var jwt = require("jsonwebtoken");
     var apiKey = process.env.API_KEY || "super-secret-key-123";
+    var JWT_SECRET = process.env.JWT_SECRET || "kasir-vps-secure-jwt-key-2026";
     function authenticateApiKey(req, res, next) {
       const token = req.headers["authorization"]?.split(" ")[1] || req.query.token;
-      if (token !== apiKey) {
-        return res.status(401).json({ error: "Unauthorized: API Key invalid" });
+      if (!token) {
+        return res.status(401).json({ error: "Unauthorized: Token is missing" });
       }
-      next();
+      if (token === apiKey) {
+        req.authType = "apikey";
+        return next();
+      }
+      try {
+        const decoded = jwt.verify(token, JWT_SECRET);
+        req.user = decoded;
+        req.authType = "jwt";
+        return next();
+      } catch (err) {
+        return res.status(401).json({ error: "Unauthorized: Token tidak valid atau kedaluwarsa." });
+      }
     }
     module2.exports = {
       authenticateApiKey,
+      authenticateUser: authenticateApiKey,
+      // Alias
       apiKey
     };
   }
@@ -1251,10 +1401,12 @@ var require_routes = __commonJS({
   "routes/index.js"(exports2, module2) {
     var express2 = require("express");
     var router = express2.Router();
+    var authRoutes = require_authRoutes();
     var deviceRoutes = require_deviceRoutes();
     var fileRoutes = require_fileRoutes();
     var uploadRoutes = require_uploadRoutes();
     var monthlyRoutes = require_monthlyRoutes();
+    router.use("/auth", authRoutes);
     router.use("/", deviceRoutes);
     router.use("/", fileRoutes);
     router.use("/", uploadRoutes);
