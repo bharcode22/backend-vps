@@ -164,6 +164,22 @@ async function findUserByUsername(username) {
   return memoryUsers.get(username) || null;
 }
 
+async function findUserByPhone(phoneNumber) {
+  if (dbEnabled && prisma) {
+    try {
+      return await prisma.user.findUnique({
+        where: { phoneNumber }
+      });
+    } catch (err) {
+      console.error('Error saat mencari user berdasarkan phone di database (Prisma):', err.message);
+      throw err;
+    }
+  }
+
+  // Fallback in-memory
+  return Array.from(memoryUsers.values()).find(u => u.phoneNumber === phoneNumber) || null;
+}
+
 async function findOrCreateUserByPhone(phoneNumber) {
   if (dbEnabled && prisma) {
     try {
@@ -265,6 +281,7 @@ module.exports = {
   logAccess,
   createUser,
   findUserByUsername,
+  findUserByPhone,
   findOrCreateUserByPhone,
   saveMessage,
   getChatHistory,

@@ -76,6 +76,26 @@ function initSocket(server) {
         }
       });
 
+      // Event cek apakah nomor HP terdaftar di server
+      socket.on('check_user', async (data, callback) => {
+        const { phoneNumber } = data;
+        if (!phoneNumber) {
+          if (callback) callback({ success: false, error: 'Nomor HP wajib diisi' });
+          return;
+        }
+        try {
+          const user = await db.findUserByPhone(phoneNumber);
+          if (user) {
+            if (callback) callback({ success: true, exists: true });
+          } else {
+            if (callback) callback({ success: true, exists: false });
+          }
+        } catch (err) {
+          console.error(`❌ Gagal verifikasi nomor HP:`, err.message);
+          if (callback) callback({ success: false, error: 'Gagal memverifikasi nomor HP' });
+        }
+      });
+
       // Event ambil riwayat chat
       socket.on('get_chat_history', async (data, callback) => {
         const { to } = data;
