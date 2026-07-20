@@ -502,7 +502,7 @@ var require_deviceController = __commonJS({
         console.log(`\u26A1 Serving preview directly from VPS cache (live route): ${targetDiskPath}`);
         res.setHeader("Content-Disposition", "inline");
         res.setHeader("Content-Type", contentType);
-        return res.sendFile(targetDiskPath);
+        return res.sendFile(path.resolve(targetDiskPath));
       }
       const downloadSessionId = crypto.randomBytes(16).toString("hex");
       console.log(`\u{1F441}\uFE0F  Browser meminta preview: "${filePath}" (Session: ${downloadSessionId})`);
@@ -697,7 +697,36 @@ var require_fileController = __commonJS({
           const timeB = b.mtime ? new Date(b.mtime).getTime() : 0;
           return timeB - timeA;
         });
-        res.json(files);
+        const enrichedFiles = files.map((file) => {
+          const fileExtension = path.extname(file.name).toLowerCase();
+          const mtime = file.mtime || file.fileMtime;
+          let dateStr = "no-date";
+          if (mtime) {
+            try {
+              const d = new Date(mtime);
+              if (!isNaN(d.getTime())) {
+                const localYear = d.getFullYear();
+                const localMonth = String(d.getMonth() + 1).padStart(2, "0");
+                const localDay = String(d.getDate()).padStart(2, "0");
+                dateStr = `${localYear}-${localMonth}-${localDay}`;
+              }
+            } catch (e) {
+            }
+          }
+          const isImgExt = [".jpg", ".jpeg", ".png", ".gif", ".webp", ".heic", ".bmp"].includes(fileExtension);
+          let previewFileName = file.name;
+          if (!isImgExt) {
+            previewFileName = `${file.name}.jpg`;
+          }
+          const fileDiskPath = path.join(targetDir, dateStr, previewFileName);
+          const isCachedOnVps = fs.existsSync(fileDiskPath);
+          return {
+            ...file,
+            isCachedOnVps,
+            vpsCacheDate: dateStr
+          };
+        });
+        res.json(enrichedFiles);
       } catch (err) {
         res.status(500).json({ error: "Gagal memuat berkas cache dari VPS.", details: err.message });
       }
@@ -816,7 +845,7 @@ var require_fileController = __commonJS({
           console.log(`\u26A1 Serving preview directly from VPS cache: ${targetDiskPath}`);
           res.setHeader("Content-Disposition", "inline");
           res.setHeader("Content-Type", contentType);
-          return res.sendFile(targetDiskPath);
+          return res.sendFile(path.resolve(targetDiskPath));
         }
         const downloadSessionId = crypto.randomBytes(16).toString("hex");
         console.log(`\u{1F441}\uFE0F  Meminta preview berkas dari perangkat: "${deviceFilePath}" (Session: ${downloadSessionId})`);
@@ -910,7 +939,7 @@ var require_fileController = __commonJS({
           console.log(`\u26A1 Serving file download directly from VPS cache: ${targetDiskPath}`);
           res.setHeader("Content-Disposition", `attachment; filename="${encodeURIComponent(name)}"`);
           res.setHeader("Content-Type", "application/octet-stream");
-          return res.sendFile(targetDiskPath);
+          return res.sendFile(path.resolve(targetDiskPath));
         }
         res.setHeader("Content-Disposition", `attachment; filename="${encodeURIComponent(name)}"`);
         res.setHeader("Content-Type", "application/octet-stream");

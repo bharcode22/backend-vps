@@ -253,7 +253,7 @@ async function previewFileCached(req, res) {
       console.log(`⚡ Serving preview directly from VPS cache: ${targetDiskPath}`);
       res.setHeader('Content-Disposition', 'inline');
       res.setHeader('Content-Type', contentType);
-      return res.sendFile(targetDiskPath);
+      return res.sendFile(path.resolve(targetDiskPath));
     }
 
     const downloadSessionId = crypto.randomBytes(16).toString('hex');
@@ -368,7 +368,7 @@ async function downloadFileCached(req, res) {
       console.log(`⚡ Serving file download directly from VPS cache: ${targetDiskPath}`);
       res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(name)}"`);
       res.setHeader('Content-Type', 'application/octet-stream');
-      return res.sendFile(targetDiskPath);
+      return res.sendFile(path.resolve(targetDiskPath));
     }
 
     res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(name)}"`);

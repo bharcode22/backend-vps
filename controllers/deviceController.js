@@ -224,7 +224,7 @@ async function previewDeviceFile(req, res) {
     console.log(`⚡ Serving preview directly from VPS cache (live route): ${targetDiskPath}`);
     res.setHeader('Content-Disposition', 'inline');
     res.setHeader('Content-Type', contentType);
-    return res.sendFile(targetDiskPath);
+    return res.sendFile(path.resolve(targetDiskPath));
   }
 
   const downloadSessionId = crypto.randomBytes(16).toString('hex');
