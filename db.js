@@ -342,17 +342,24 @@ async function getRecentChats(myPhone) {
       });
 
       const recentMap = new Map();
+      const unreadMap = new Map();
+
       for (const msg of messages) {
         const peer = msg.fromPhone === myPhone ? msg.toPhone : msg.fromPhone;
         if (!recentMap.has(peer)) {
           recentMap.set(peer, msg);
+        }
+        // Count unread: messages FROM peer TO me that are not yet read
+        if (msg.toPhone === myPhone && msg.fromPhone !== myPhone && msg.status !== 'read') {
+          unreadMap.set(peer, (unreadMap.get(peer) || 0) + 1);
         }
       }
 
       return Array.from(recentMap.entries()).map(([peer, lastMsg]) => ({
         phoneNumber: peer,
         lastMessage: lastMsg.content,
-        timestamp: lastMsg.createdAt
+        timestamp: lastMsg.createdAt,
+        unreadCount: unreadMap.get(peer) || 0
       }));
     } catch (err) {
       console.error('Error saat mengambil recent chats dari database (Prisma):', err.message);
@@ -362,6 +369,7 @@ async function getRecentChats(myPhone) {
 
   // Fallback in-memory
   const recentMap = new Map();
+  const unreadMap = new Map();
   const sortedMemoryMsgs = [...memoryMessages].sort((a, b) => b.createdAt - a.createdAt);
   for (const msg of sortedMemoryMsgs) {
     if (msg.fromPhone === myPhone || msg.toPhone === myPhone) {
@@ -369,13 +377,17 @@ async function getRecentChats(myPhone) {
       if (!recentMap.has(peer)) {
         recentMap.set(peer, msg);
       }
+      if (msg.toPhone === myPhone && msg.fromPhone !== myPhone && msg.status !== 'read') {
+        unreadMap.set(peer, (unreadMap.get(peer) || 0) + 1);
+      }
     }
   }
 
   return Array.from(recentMap.entries()).map(([peer, lastMsg]) => ({
     phoneNumber: peer,
     lastMessage: lastMsg.content,
-    timestamp: lastMsg.createdAt
+    timestamp: lastMsg.createdAt,
+    unreadCount: unreadMap.get(peer) || 0
   }));
 }
 
