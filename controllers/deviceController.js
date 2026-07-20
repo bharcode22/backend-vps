@@ -219,6 +219,14 @@ async function previewDeviceFile(req, res) {
   }
   const targetDiskPath = path.join(dateDir, previewFileName);
 
+  // Cek jika file preview sudah tersimpan di VPS local disk (Offline Fallback)
+  if (fs.existsSync(targetDiskPath)) {
+    console.log(`⚡ Serving preview directly from VPS cache (live route): ${targetDiskPath}`);
+    res.setHeader('Content-Disposition', 'inline');
+    res.setHeader('Content-Type', contentType);
+    return res.sendFile(targetDiskPath);
+  }
+
   const downloadSessionId = crypto.randomBytes(16).toString('hex');
 
   console.log(`👁️  Browser meminta preview: "${filePath}" (Session: ${downloadSessionId})`);

@@ -73,7 +73,39 @@ async function getFiles(req, res) {
       return timeB - timeA;
     });
 
-    res.json(files);
+    // Dapatkan status caching fisik untuk setiap file
+    const enrichedFiles = files.map(file => {
+      const fileExtension = path.extname(file.name).toLowerCase();
+      const mtime = file.mtime || file.fileMtime;
+      let dateStr = 'no-date';
+      if (mtime) {
+        try {
+          const d = new Date(mtime);
+          if (!isNaN(d.getTime())) {
+            const localYear = d.getFullYear();
+            const localMonth = String(d.getMonth() + 1).padStart(2, '0');
+            const localDay = String(d.getDate()).padStart(2, '0');
+            dateStr = `${localYear}-${localMonth}-${localDay}`;
+          }
+        } catch (e) {}
+      }
+      
+      const isImgExt = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.heic', '.bmp'].includes(fileExtension);
+      let previewFileName = file.name;
+      if (!isImgExt) {
+        previewFileName = `${file.name}.jpg`;
+      }
+      const fileDiskPath = path.join(targetDir, dateStr, previewFileName);
+      const isCachedOnVps = fs.existsSync(fileDiskPath);
+      
+      return {
+        ...file,
+        isCachedOnVps,
+        vpsCacheDate: dateStr
+      };
+    });
+
+    res.json(enrichedFiles);
   } catch (err) {
     res.status(500).json({ error: 'Gagal memuat berkas cache dari VPS.', details: err.message });
   }
@@ -187,7 +219,7 @@ async function previewFileCached(req, res) {
           const localDay = String(d.getDate()).padStart(2, '0');
           dateStr = `${localYear}-${localMonth}-${localDay}`;
         }
-      } catch (e) {}
+      } catch (e) { }
     } else {
       // Fallback ke tanggal saat ini
       const d = new Date();
@@ -216,6 +248,14 @@ async function previewFileCached(req, res) {
     else if (fileExtension === '.gif') contentType = 'image/gif';
     else if (fileExtension === '.webp') contentType = 'image/webp';
 
+    // Cek jika file preview sudah tersimpan di VPS local disk (Offline Fallback)
+    if (fs.existsSync(targetDiskPath)) {
+      console.log(`⚡ Serving preview directly from VPS cache: ${targetDiskPath}`);
+      res.setHeader('Content-Disposition', 'inline');
+      res.setHeader('Content-Type', contentType);
+      return res.sendFile(targetDiskPath);
+    }
+
     const downloadSessionId = crypto.randomBytes(16).toString('hex');
     console.log(`👁️  Meminta preview berkas dari perangkat: "${deviceFilePath}" (Session: ${downloadSessionId})`);
     console.log(`💾 Preview akan disimpan di VPS: ${targetDiskPath}`);
@@ -233,13 +273,13 @@ async function previewFileCached(req, res) {
     }, 30000);
 
     // Set saveToDisk dan targetDiskPath agar sekaligus menyimpan file hasil stream ke VPS disk
-    pendingDownloads.set(downloadSessionId, { 
-      res, 
-      timer, 
-      fileName: name, 
-      saveToDisk: true, 
-      targetDiskPath, 
-      isStreamResponse: true 
+    pendingDownloads.set(downloadSessionId, {
+      res,
+      timer,
+      fileName: name,
+      saveToDisk: true,
+      targetDiskPath,
+      isStreamResponse: true
     });
 
     await socketModule.sendDeviceCommand(activeDeviceId, 'GET_PREVIEW', {
@@ -293,6 +333,43 @@ async function downloadFileCached(req, res) {
     }
 
     const deviceFilePath = targetFile.path;
+    const fileExtension = path.extname(name).toLowerCase();
+
+    // Tentukan folder tanggal berdasarkan mtime berkas untuk melacak lokasinya di VPS
+    const mtime = targetFile.mtime || targetFile.fileMtime;
+    let dateStr = 'no-date';
+    if (mtime) {
+      try {
+        const d = new Date(mtime);
+        if (!isNaN(d.getTime())) {
+          const localYear = d.getFullYear();
+          const localMonth = String(d.getMonth() + 1).padStart(2, '0');
+          const localDay = String(d.getDate()).padStart(2, '0');
+          dateStr = `${localYear}-${localMonth}-${localDay}`;
+        }
+      } catch (e) { }
+    } else {
+      const d = new Date();
+      const localYear = d.getFullYear();
+      const localMonth = String(d.getMonth() + 1).padStart(2, '0');
+      const localDay = String(d.getDate()).padStart(2, '0');
+      dateStr = `${localYear}-${localMonth}-${localDay}`;
+    }
+
+    const isImgExt = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.heic', '.bmp'].includes(fileExtension);
+    let previewFileName = name;
+    if (!isImgExt) {
+      previewFileName = `${name}.jpg`;
+    }
+    const targetDiskPath = path.join(targetDir, dateStr, previewFileName);
+
+    // Cek jika berkas sudah tersimpan di VPS disk
+    if (fs.existsSync(targetDiskPath)) {
+      console.log(`⚡ Serving file download directly from VPS cache: ${targetDiskPath}`);
+      res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(name)}"`);
+      res.setHeader('Content-Type', 'application/octet-stream');
+      return res.sendFile(targetDiskPath);
+    }
 
     res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(name)}"`);
     res.setHeader('Content-Type', 'application/octet-stream');

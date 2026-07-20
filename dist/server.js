@@ -498,6 +498,12 @@ var require_deviceController = __commonJS({
         previewFileName = `${fileName}.jpg`;
       }
       const targetDiskPath = path.join(dateDir, previewFileName);
+      if (fs.existsSync(targetDiskPath)) {
+        console.log(`\u26A1 Serving preview directly from VPS cache (live route): ${targetDiskPath}`);
+        res.setHeader("Content-Disposition", "inline");
+        res.setHeader("Content-Type", contentType);
+        return res.sendFile(targetDiskPath);
+      }
       const downloadSessionId = crypto.randomBytes(16).toString("hex");
       console.log(`\u{1F441}\uFE0F  Browser meminta preview: "${filePath}" (Session: ${downloadSessionId})`);
       console.log(`\u{1F4BE} Preview akan disimpan di VPS: ${targetDiskPath}`);
@@ -806,6 +812,12 @@ var require_fileController = __commonJS({
         if (fileExtension === ".png") contentType = "image/png";
         else if (fileExtension === ".gif") contentType = "image/gif";
         else if (fileExtension === ".webp") contentType = "image/webp";
+        if (fs.existsSync(targetDiskPath)) {
+          console.log(`\u26A1 Serving preview directly from VPS cache: ${targetDiskPath}`);
+          res.setHeader("Content-Disposition", "inline");
+          res.setHeader("Content-Type", contentType);
+          return res.sendFile(targetDiskPath);
+        }
         const downloadSessionId = crypto.randomBytes(16).toString("hex");
         console.log(`\u{1F441}\uFE0F  Meminta preview berkas dari perangkat: "${deviceFilePath}" (Session: ${downloadSessionId})`);
         console.log(`\u{1F4BE} Preview akan disimpan di VPS: ${targetDiskPath}`);
@@ -867,6 +879,39 @@ var require_fileController = __commonJS({
           return res.status(404).json({ error: `Berkas "${name}" tidak ditemukan.` });
         }
         const deviceFilePath = targetFile.path;
+        const fileExtension = path.extname(name).toLowerCase();
+        const mtime = targetFile.mtime || targetFile.fileMtime;
+        let dateStr = "no-date";
+        if (mtime) {
+          try {
+            const d = new Date(mtime);
+            if (!isNaN(d.getTime())) {
+              const localYear = d.getFullYear();
+              const localMonth = String(d.getMonth() + 1).padStart(2, "0");
+              const localDay = String(d.getDate()).padStart(2, "0");
+              dateStr = `${localYear}-${localMonth}-${localDay}`;
+            }
+          } catch (e) {
+          }
+        } else {
+          const d = /* @__PURE__ */ new Date();
+          const localYear = d.getFullYear();
+          const localMonth = String(d.getMonth() + 1).padStart(2, "0");
+          const localDay = String(d.getDate()).padStart(2, "0");
+          dateStr = `${localYear}-${localMonth}-${localDay}`;
+        }
+        const isImgExt = [".jpg", ".jpeg", ".png", ".gif", ".webp", ".heic", ".bmp"].includes(fileExtension);
+        let previewFileName = name;
+        if (!isImgExt) {
+          previewFileName = `${name}.jpg`;
+        }
+        const targetDiskPath = path.join(targetDir, dateStr, previewFileName);
+        if (fs.existsSync(targetDiskPath)) {
+          console.log(`\u26A1 Serving file download directly from VPS cache: ${targetDiskPath}`);
+          res.setHeader("Content-Disposition", `attachment; filename="${encodeURIComponent(name)}"`);
+          res.setHeader("Content-Type", "application/octet-stream");
+          return res.sendFile(targetDiskPath);
+        }
         res.setHeader("Content-Disposition", `attachment; filename="${encodeURIComponent(name)}"`);
         res.setHeader("Content-Type", "application/octet-stream");
         const downloadSessionId = crypto.randomBytes(16).toString("hex");
