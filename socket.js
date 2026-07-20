@@ -96,6 +96,17 @@ function initSocket(server) {
         }
       });
 
+      // Event mengambil list chat terakhir (Recent Chats)
+      socket.on('get_recent_chats', async (data, callback) => {
+        try {
+          const recent = await db.getRecentChats(phoneNumber);
+          if (callback) callback({ success: true, recent });
+        } catch (err) {
+          console.error(`❌ Gagal ambil recent chats:`, err.message);
+          if (callback) callback({ success: false, error: 'Gagal mengambil daftar chat terakhir' });
+        }
+      });
+
       // Event ambil riwayat chat
       socket.on('get_chat_history', async (data, callback) => {
         const { to } = data;

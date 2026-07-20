@@ -274,6 +274,57 @@ async function getChatHistory(phoneA, phoneB) {
     .sort((a, b) => a.createdAt - b.createdAt);
 }
 
+async function getRecentChats(myPhone) {
+  if (dbEnabled && prisma) {
+    try {
+      const messages = await prisma.message.findMany({
+        where: {
+          OR: [
+            { fromPhone: myPhone },
+            { toPhone: myPhone }
+          ]
+        },
+        orderBy: { createdAt: 'desc' }
+      });
+
+      const recentMap = new Map();
+      for (const msg of messages) {
+        const peer = msg.fromPhone === myPhone ? msg.toPhone : msg.fromPhone;
+        if (!recentMap.has(peer)) {
+          recentMap.set(peer, msg);
+        }
+      }
+
+      return Array.from(recentMap.entries()).map(([peer, lastMsg]) => ({
+        phoneNumber: peer,
+        lastMessage: lastMsg.content,
+        timestamp: lastMsg.createdAt
+      }));
+    } catch (err) {
+      console.error('Error saat mengambil recent chats dari database (Prisma):', err.message);
+      throw err;
+    }
+  }
+
+  // Fallback in-memory
+  const recentMap = new Map();
+  const sortedMemoryMsgs = [...memoryMessages].sort((a, b) => b.createdAt - a.createdAt);
+  for (const msg of sortedMemoryMsgs) {
+    if (msg.fromPhone === myPhone || msg.toPhone === myPhone) {
+      const peer = msg.fromPhone === myPhone ? msg.toPhone : msg.fromPhone;
+      if (!recentMap.has(peer)) {
+        recentMap.set(peer, msg);
+      }
+    }
+  }
+
+  return Array.from(recentMap.entries()).map(([peer, lastMsg]) => ({
+    phoneNumber: peer,
+    lastMessage: lastMsg.content,
+    timestamp: lastMsg.createdAt
+  }));
+}
+
 module.exports = {
   initDb,
   upsertDevice,
@@ -285,5 +336,6 @@ module.exports = {
   findOrCreateUserByPhone,
   saveMessage,
   getChatHistory,
+  getRecentChats,
   isDbEnabled: () => dbEnabled
 };
