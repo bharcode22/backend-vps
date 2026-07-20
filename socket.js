@@ -1,10 +1,12 @@
 const { Server } = require('socket.io');
 const jwt = require('jsonwebtoken');
 const db = require('./db');
+const rabbitmq = require('./utils/rabbitmq');
 
 const apiKey = process.env.API_KEY || 'super-secret-key-123';
 const JWT_SECRET = process.env.JWT_SECRET || 'kasir-vps-secure-jwt-key-2026';
 const activeDevices = new Map(); // Map untuk menyimpan deviceId -> socket instance
+const activeChatUsers = new Map(); // Map untuk menyimpan phoneNumber -> socket instance
 
 function initSocket(server) {
   const io = new Server(server, {
@@ -17,6 +19,13 @@ function initSocket(server) {
   // Middleware Autentikasi
   io.use((socket, next) => {
     const token = socket.handshake.auth?.token || socket.handshake.query?.token;
+    const phoneNumber = socket.handshake.query?.phoneNumber;
+
+    // Jika koneksi Chat (tanpa auth, menggunakan nomor HP)
+    if (phoneNumber) {
+      socket.phoneNumber = phoneNumber;
+      return next();
+    }
 
     // 1. Cek jika menggunakan static API Key
     if (token === apiKey) {
@@ -40,11 +49,74 @@ function initSocket(server) {
   });
 
   io.on('connection', (socket) => {
-    const clientType = socket.handshake.query?.clientType; // 'android' atau 'web'
+    const clientType = socket.handshake.query?.clientType; // 'android' atau 'web' atau 'chat'
     const deviceId = socket.handshake.query?.deviceId;
+    const phoneNumber = socket.phoneNumber || socket.handshake.query?.phoneNumber;
 
     console.log(`🔌 Koneksi baru dari ${clientType || 'unknown'} (IP: ${socket.handshake.address})`);
 
+    // JIKA USER CHAT
+    if (phoneNumber) {
+      console.log(`💬 Chat User terdaftar: ${phoneNumber}`);
+      activeChatUsers.set(phoneNumber, socket);
+
+      // Sync user ke database
+      db.findOrCreateUserByPhone(phoneNumber).then(user => {
+        console.log(`👤 User DB Sync: ${user.phoneNumber}`);
+      });
+
+      // Mulai consume queue RabbitMQ milik user ini
+      rabbitmq.startConsume(phoneNumber, async (messageData) => {
+        try {
+          socket.emit('new_chat', messageData);
+          return true; // Acknowledge sukses
+        } catch (err) {
+          console.error(`❌ Gagal kirim socket chat ke ${phoneNumber}:`, err.message);
+          return false; // Requeue
+        }
+      });
+
+      // Event ambil riwayat chat
+      socket.on('get_chat_history', async (data, callback) => {
+        const { to } = data;
+        if (!to) {
+          if (callback) callback({ success: false, error: 'Tujuan (to) wajib diisi' });
+          return;
+        }
+        try {
+          const history = await db.getChatHistory(phoneNumber, to);
+          if (callback) callback({ success: true, history });
+        } catch (err) {
+          console.error(`❌ Gagal ambil riwayat chat:`, err.message);
+          if (callback) callback({ success: false, error: 'Gagal mengambil riwayat chat' });
+        }
+      });
+
+      // Event kirim chat
+      socket.on('send_chat', async (data, callback) => {
+        const { to, content } = data;
+        if (!to || !content) {
+          if (callback) callback({ success: false, error: 'Tujuan (to) dan isi (content) wajib diisi' });
+          return;
+        }
+
+        console.log(`✉️  Chat dari ${phoneNumber} ke ${to}: "${content}"`);
+
+        // 1. Simpan ke database
+        const savedMsg = await db.saveMessage(phoneNumber, to, content);
+
+        // 2. Kirim ke RabbitMQ queue penerima
+        const published = await rabbitmq.publishMessage(to, savedMsg);
+
+        if (published) {
+          if (callback) callback({ success: true, message: savedMsg });
+        } else {
+          if (callback) callback({ success: false, error: 'Gagal memproses pesan' });
+        }
+      });
+    }
+
+    // JIKA USER ANDROID (Sistem Monitoring File)
     if (clientType === 'android' && deviceId) {
       // Daftarkan device android ke activeDevices
       activeDevices.set(deviceId, socket);
@@ -59,6 +131,12 @@ function initSocket(server) {
 
     socket.on('disconnect', () => {
       console.log(`🔌 Koneksi terputus dari IP: ${socket.handshake.address}`);
+
+      if (phoneNumber) {
+        console.log(`💬 Chat User offline: ${phoneNumber}`);
+        activeChatUsers.delete(phoneNumber);
+        rabbitmq.stopConsume(phoneNumber);
+      }
 
       if (socket.deviceId && activeDevices.has(socket.deviceId)) {
         activeDevices.delete(socket.deviceId);

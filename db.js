@@ -11,6 +11,7 @@ let dbEnabled = false;
 const memoryDevices = new Map();
 const memoryLogs = [];
 const memoryUsers = new Map();
+const memoryMessages = [];
 
 // Helper untuk menyelaraskan properti camelCase (Prisma) dan snake_case (Legacy/Postgres)
 function formatDevice(device) {
@@ -163,6 +164,100 @@ async function findUserByUsername(username) {
   return memoryUsers.get(username) || null;
 }
 
+async function findOrCreateUserByPhone(phoneNumber) {
+  if (dbEnabled && prisma) {
+    try {
+      let user = await prisma.user.findUnique({
+        where: { phoneNumber }
+      });
+      if (!user) {
+        user = await prisma.user.create({
+          data: {
+            username: `user_${phoneNumber}`,
+            password: 'no-password',
+            phoneNumber: phoneNumber
+          }
+        });
+      }
+      return user;
+    } catch (err) {
+      console.error('Error saat findOrCreateUserByPhone di database (Prisma):', err.message);
+    }
+  }
+
+  // Fallback in-memory
+  let user = Array.from(memoryUsers.values()).find(u => u.phoneNumber === phoneNumber);
+  if (!user) {
+    const id = memoryUsers.size + 1;
+    user = {
+      id,
+      username: `user_${phoneNumber}`,
+      password: 'no-password',
+      phoneNumber: phoneNumber,
+      createdAt: new Date()
+    };
+    memoryUsers.set(`user_${phoneNumber}`, user);
+  }
+  return user;
+}
+
+async function saveMessage(fromPhone, toPhone, content) {
+  const createdAt = new Date();
+  if (dbEnabled && prisma) {
+    try {
+      return await prisma.message.create({
+        data: {
+          fromPhone,
+          toPhone,
+          content,
+          createdAt
+        }
+      });
+    } catch (err) {
+      console.error('Error saat menyimpan message ke database (Prisma):', err.message);
+    }
+  }
+
+  // Fallback in-memory
+  const id = memoryMessages.length + 1;
+  const msg = {
+    id,
+    fromPhone,
+    toPhone,
+    content,
+    createdAt
+  };
+  memoryMessages.push(msg);
+  return msg;
+}
+
+async function getChatHistory(phoneA, phoneB) {
+  if (dbEnabled && prisma) {
+    try {
+      return await prisma.message.findMany({
+        where: {
+          OR: [
+            { fromPhone: phoneA, toPhone: phoneB },
+            { fromPhone: phoneB, toPhone: phoneA }
+          ]
+        },
+        orderBy: { createdAt: 'asc' }
+      });
+    } catch (err) {
+      console.error('Error saat mengambil chat history dari database (Prisma):', err.message);
+    }
+  }
+
+  // Fallback in-memory
+  return memoryMessages
+    .filter(
+      msg =>
+        (msg.fromPhone === phoneA && msg.toPhone === phoneB) ||
+        (msg.fromPhone === phoneB && msg.toPhone === phoneA)
+    )
+    .sort((a, b) => a.createdAt - b.createdAt);
+}
+
 module.exports = {
   initDb,
   upsertDevice,
@@ -170,5 +265,8 @@ module.exports = {
   logAccess,
   createUser,
   findUserByUsername,
+  findOrCreateUserByPhone,
+  saveMessage,
+  getChatHistory,
   isDbEnabled: () => dbEnabled
 };

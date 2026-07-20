@@ -5,6 +5,7 @@ const cors = require('cors');
 const db = require('./db');
 const socketModule = require('./socket');
 const apiRoutes = require('./routes');
+const rabbitmq = require('./utils/rabbitmq');
 
 const app = express();
 const server = http.createServer(app);
@@ -44,6 +45,9 @@ app.use('/api', apiRoutes);
 async function startServer() {
   // Inisialisasi koneksi PostgreSQL (dengan in-memory fallback otomatis jika gagal)
   await db.initDb();
+
+  // Inisialisasi RabbitMQ
+  await rabbitmq.initRabbitMQ();
 
   // Inisialisasi Socket.IO
   socketModule.initSocket(server);
