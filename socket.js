@@ -134,7 +134,7 @@ function initSocket(server) {
 
       // Event kirim chat
       socket.on('send_chat', async (data, callback) => {
-        const { to, content } = data;
+        const { to, content, replyToId, replyToContent } = data;
         if (!to || !content) {
           if (callback) callback({ success: false, error: 'Tujuan (to) dan isi (content) wajib diisi' });
           return;
@@ -146,8 +146,8 @@ function initSocket(server) {
         const isPeerInOurRoom = activeUserRooms.get(to) === phoneNumber;
         const initialStatus = isPeerInOurRoom ? 'read' : 'sent';
 
-        // 1. Simpan ke database dengan status
-        const savedMsg = await db.saveMessage(phoneNumber, to, content, initialStatus);
+        // 1. Simpan ke database dengan status dan reply metadata
+        const savedMsg = await db.saveMessage(phoneNumber, to, content, initialStatus, replyToId, replyToContent);
 
         // 2. Kirim ke RabbitMQ queue penerima
         const published = await rabbitmq.publishMessage(to, savedMsg);
@@ -203,6 +203,28 @@ function initSocket(server) {
           console.error(`❌ Gagal ambil status user:`, err.message);
           if (callback) callback({ success: false, error: 'Gagal mengambil status user' });
         }
+      });
+
+      // Event hapus chat
+      socket.on('delete_chat', async (data, callback) => {
+        const { id, to } = data;
+        if (!id) {
+          if (callback) callback({ success: false, error: 'ID pesan wajib diisi' });
+          return;
+        }
+
+        console.log(`🗑️  Chat ID ${id} dihapus oleh ${phoneNumber}`);
+
+        // 1. Hapus dari database
+        await db.deleteMessage(id);
+
+        // 2. Beritahu penerima (jika online) agar menghapus pesan dari UI secara real-time
+        const peerSocket = activeChatUsers.get(to);
+        if (peerSocket) {
+          peerSocket.emit('chat_deleted', { id });
+        }
+
+        if (callback) callback({ success: true });
       });
     }
 

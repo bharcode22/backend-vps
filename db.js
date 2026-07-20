@@ -217,7 +217,7 @@ async function findOrCreateUserByPhone(phoneNumber) {
   return user;
 }
 
-async function saveMessage(fromPhone, toPhone, content, status = 'sent') {
+async function saveMessage(fromPhone, toPhone, content, status = 'sent', replyToId = null, replyToContent = null) {
   const createdAt = new Date();
   if (dbEnabled && prisma) {
     try {
@@ -227,6 +227,8 @@ async function saveMessage(fromPhone, toPhone, content, status = 'sent') {
           toPhone,
           content,
           status,
+          replyToId: replyToId ? parseInt(replyToId) : null,
+          replyToContent,
           createdAt
         }
       });
@@ -243,6 +245,8 @@ async function saveMessage(fromPhone, toPhone, content, status = 'sent') {
     toPhone,
     content,
     status,
+    replyToId: replyToId ? parseInt(replyToId) : null,
+    replyToContent,
     createdAt
   };
   memoryMessages.push(msg);
@@ -274,6 +278,26 @@ async function markMessagesAsRead(fromPhone, toPhone) {
       msg.status = 'read';
     }
   });
+  return true;
+}
+
+async function deleteMessage(id) {
+  if (dbEnabled && prisma) {
+    try {
+      await prisma.message.delete({
+        where: { id: parseInt(id) }
+      });
+      return true;
+    } catch (err) {
+      console.error('Error saat menghapus message dari database (Prisma):', err.message);
+    }
+  }
+
+  // Fallback in-memory
+  const index = memoryMessages.findIndex(msg => msg.id === parseInt(id));
+  if (index >= 0) {
+    memoryMessages.splice(index, 1);
+  }
   return true;
 }
 
@@ -414,6 +438,7 @@ module.exports = {
   findOrCreateUserByPhone,
   saveMessage,
   markMessagesAsRead,
+  deleteMessage,
   updateUserOnlineStatus,
   getUserStatus,
   getChatHistory,
