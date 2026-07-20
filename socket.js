@@ -7,6 +7,7 @@ const apiKey = process.env.API_KEY || 'super-secret-key-123';
 const JWT_SECRET = process.env.JWT_SECRET || 'kasir-vps-secure-jwt-key-2026';
 const activeDevices = new Map(); // Map untuk menyimpan deviceId -> socket instance
 const activeChatUsers = new Map(); // Map untuk menyimpan phoneNumber -> socket instance
+const activeUserRooms = new Map(); // Map untuk menyimpan phoneNumber -> peerPhone (room aktif saat ini)
 
 function initSocket(server) {
   const io = new Server(server, {
@@ -133,8 +134,12 @@ function initSocket(server) {
 
         console.log(`✉️  Chat dari ${phoneNumber} ke ${to}: "${content}"`);
 
-        // 1. Simpan ke database
-        const savedMsg = await db.saveMessage(phoneNumber, to, content);
+        // Cek apakah penerima online dan sedang membuka room chat dengan pengirim
+        const isPeerInOurRoom = activeUserRooms.get(to) === phoneNumber;
+        const initialStatus = isPeerInOurRoom ? 'read' : 'sent';
+
+        // 1. Simpan ke database dengan status
+        const savedMsg = await db.saveMessage(phoneNumber, to, content, initialStatus);
 
         // 2. Kirim ke RabbitMQ queue penerima
         const published = await rabbitmq.publishMessage(to, savedMsg);
@@ -143,6 +148,36 @@ function initSocket(server) {
           if (callback) callback({ success: true, message: savedMsg });
         } else {
           if (callback) callback({ success: false, error: 'Gagal memproses pesan' });
+        }
+      });
+
+      // User masuk ke room chat peer tertentu
+      socket.on('enter_chat_room', (data) => {
+        const { peerPhone } = data;
+        if (peerPhone) {
+          activeUserRooms.set(phoneNumber, peerPhone);
+          console.log(`💬 User ${phoneNumber} masuk ke room chat ${peerPhone}`);
+        }
+      });
+
+      // User meninggalkan room chat peer
+      socket.on('leave_chat_room', () => {
+        activeUserRooms.delete(phoneNumber);
+        console.log(`💬 User ${phoneNumber} meninggalkan room chat`);
+      });
+
+      // User menandai pesan dari peer tertentu sebagai terbaca
+      socket.on('read_chat', async (data) => {
+        const { peerPhone } = data;
+        if (!peerPhone) return;
+
+        console.log(`👁️  User ${phoneNumber} membaca chat dari ${peerPhone}`);
+        await db.markMessagesAsRead(peerPhone, phoneNumber);
+
+        // Kirim notifikasi ke pengirim jika pengirim online
+        const peerSocket = activeChatUsers.get(peerPhone);
+        if (peerSocket) {
+          peerSocket.emit('messages_read', { fromPhone: phoneNumber });
         }
       });
     }
@@ -166,6 +201,7 @@ function initSocket(server) {
       if (phoneNumber) {
         console.log(`💬 Chat User offline: ${phoneNumber}`);
         activeChatUsers.delete(phoneNumber);
+        activeUserRooms.delete(phoneNumber);
         rabbitmq.stopConsume(phoneNumber);
       }
 

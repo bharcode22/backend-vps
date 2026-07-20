@@ -43,6 +43,7 @@ model Message {
   fromPhone String   @map("from_phone") @db.VarChar(50)
   toPhone   String   @map("to_phone") @db.VarChar(50)
   content   String   @db.Text
+  status    String   @default("sent") @db.VarChar(20)
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamp()
 
   @@map("messages")

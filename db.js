@@ -217,7 +217,7 @@ async function findOrCreateUserByPhone(phoneNumber) {
   return user;
 }
 
-async function saveMessage(fromPhone, toPhone, content) {
+async function saveMessage(fromPhone, toPhone, content, status = 'sent') {
   const createdAt = new Date();
   if (dbEnabled && prisma) {
     try {
@@ -226,6 +226,7 @@ async function saveMessage(fromPhone, toPhone, content) {
           fromPhone,
           toPhone,
           content,
+          status,
           createdAt
         }
       });
@@ -241,10 +242,39 @@ async function saveMessage(fromPhone, toPhone, content) {
     fromPhone,
     toPhone,
     content,
+    status,
     createdAt
   };
   memoryMessages.push(msg);
   return msg;
+}
+
+async function markMessagesAsRead(fromPhone, toPhone) {
+  if (dbEnabled && prisma) {
+    try {
+      await prisma.message.updateMany({
+        where: {
+          fromPhone,
+          toPhone,
+          status: 'sent'
+        },
+        data: {
+          status: 'read'
+        }
+      });
+      return true;
+    } catch (err) {
+      console.error('Error saat menandai pesan dibaca ke database (Prisma):', err.message);
+    }
+  }
+
+  // Fallback in-memory
+  memoryMessages.forEach(msg => {
+    if (msg.fromPhone === fromPhone && msg.toPhone === toPhone && msg.status === 'sent') {
+      msg.status = 'read';
+    }
+  });
+  return true;
 }
 
 async function getChatHistory(phoneA, phoneB) {
@@ -335,6 +365,7 @@ module.exports = {
   findUserByPhone,
   findOrCreateUserByPhone,
   saveMessage,
+  markMessagesAsRead,
   getChatHistory,
   getRecentChats,
   isDbEnabled: () => dbEnabled
