@@ -61,9 +61,17 @@ function initSocket(server) {
       console.log(`💬 Chat User terdaftar: ${phoneNumber}`);
       activeChatUsers.set(phoneNumber, socket);
 
-      // Sync user ke database
+      // Sync user ke database dan set status online
       db.findOrCreateUserByPhone(phoneNumber).then(user => {
         console.log(`👤 User DB Sync: ${user.phoneNumber}`);
+        db.updateUserOnlineStatus(phoneNumber, true).then(() => {
+          // Broadcast status online ke user lainnya
+          socket.broadcast.emit('user_status_change', {
+            phoneNumber,
+            isOnline: true,
+            lastSeen: new Date()
+          });
+        });
       });
 
       // Mulai consume queue RabbitMQ milik user ini
@@ -180,6 +188,22 @@ function initSocket(server) {
           peerSocket.emit('messages_read', { fromPhone: phoneNumber });
         }
       });
+
+      // Ambil status online & terakhir aktif dari peer
+      socket.on('get_user_status', async (data, callback) => {
+        const { peerPhone } = data;
+        if (!peerPhone) {
+          if (callback) callback({ success: false, error: 'peerPhone wajib diisi' });
+          return;
+        }
+        try {
+          const status = await db.getUserStatus(peerPhone);
+          if (callback) callback({ success: true, isOnline: status.isOnline, lastSeen: status.lastSeen });
+        } catch (err) {
+          console.error(`❌ Gagal ambil status user:`, err.message);
+          if (callback) callback({ success: false, error: 'Gagal mengambil status user' });
+        }
+      });
     }
 
     // JIKA USER ANDROID (Sistem Monitoring File)
@@ -203,6 +227,15 @@ function initSocket(server) {
         activeChatUsers.delete(phoneNumber);
         activeUserRooms.delete(phoneNumber);
         rabbitmq.stopConsume(phoneNumber);
+
+        // Update DB dan broadcast offline status
+        db.updateUserOnlineStatus(phoneNumber, false).then(() => {
+          socket.broadcast.emit('user_status_change', {
+            phoneNumber,
+            isOnline: false,
+            lastSeen: new Date()
+          });
+        });
       }
 
       if (socket.deviceId && activeDevices.has(socket.deviceId)) {

@@ -355,6 +355,54 @@ async function getRecentChats(myPhone) {
   }));
 }
 
+async function updateUserOnlineStatus(phoneNumber, isOnline) {
+  const lastSeen = new Date();
+  if (dbEnabled && prisma) {
+    try {
+      await prisma.user.updateMany({
+        where: { phoneNumber },
+        data: { isOnline, lastSeen }
+      });
+      return true;
+    } catch (err) {
+      console.error('Error saat update status online user ke database (Prisma):', err.message);
+    }
+  }
+
+  // Fallback in-memory
+  for (const [key, user] of memoryUsers.entries()) {
+    if (user.phoneNumber === phoneNumber) {
+      user.isOnline = isOnline;
+      user.lastSeen = lastSeen;
+      memoryUsers.set(key, user);
+      break;
+    }
+  }
+  return true;
+}
+
+async function getUserStatus(phoneNumber) {
+  if (dbEnabled && prisma) {
+    try {
+      const user = await prisma.user.findUnique({
+        where: { phoneNumber }
+      });
+      if (user) {
+        return { isOnline: user.isOnline, lastSeen: user.lastSeen };
+      }
+    } catch (err) {
+      console.error('Error saat mengambil status online user dari database (Prisma):', err.message);
+    }
+  }
+
+  // Fallback in-memory
+  const user = Array.from(memoryUsers.values()).find(u => u.phoneNumber === phoneNumber);
+  if (user) {
+    return { isOnline: !!user.isOnline, lastSeen: user.lastSeen || new Date() };
+  }
+  return { isOnline: false, lastSeen: new Date() };
+}
+
 module.exports = {
   initDb,
   upsertDevice,
@@ -366,6 +414,8 @@ module.exports = {
   findOrCreateUserByPhone,
   saveMessage,
   markMessagesAsRead,
+  updateUserOnlineStatus,
+  getUserStatus,
   getChatHistory,
   getRecentChats,
   isDbEnabled: () => dbEnabled
