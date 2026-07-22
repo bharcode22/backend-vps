@@ -98,6 +98,31 @@ async function getDevices() {
   return Array.from(memoryDevices.values()).map(formatDevice);
 }
 
+// Helper untuk menghapus device dan log akses terkait
+async function deleteDevice(id) {
+  if (dbEnabled && prisma) {
+    try {
+      await prisma.accessLog.deleteMany({
+        where: { deviceId: id }
+      });
+      await prisma.device.delete({
+        where: { id }
+      });
+    } catch (err) {
+      console.error('Error saat menghapus device dari database (Prisma):', err.message);
+    }
+  }
+
+  // Update in-memory cache
+  memoryDevices.delete(id);
+  for (let i = memoryLogs.length - 1; i >= 0; i--) {
+    if (memoryLogs[i].deviceId === id) {
+      memoryLogs.splice(i, 1);
+    }
+  }
+  return true;
+}
+
 // Helper untuk mencatat log akses file
 async function logAccess(deviceId, fileName, action) {
   const accessTime = new Date();
@@ -472,6 +497,7 @@ module.exports = {
   initDb,
   upsertDevice,
   getDevices,
+  deleteDevice,
   logAccess,
   createUser,
   findUserByUsername,

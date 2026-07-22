@@ -18,4 +18,7 @@ router.get('/devices/:deviceId/preview', authenticateApiKey, deviceController.pr
 // GET /api/devices/:deviceId/fetch-to-vps - Mengambil file dari Android dan menyimpannya di disk VPS
 router.get('/devices/:deviceId/fetch-to-vps', authenticateApiKey, deviceController.fetchDeviceFileToVps);
 
+// DELETE /api/devices/:deviceId - Menghapus perangkat dan seluruh file/folder terkait di VPS
+router.delete('/devices/:deviceId', authenticateApiKey, deviceController.deleteDevice);
+
 module.exports = router;

@@ -181,7 +181,7 @@ async function previewDeviceFile(req, res) {
         mtime = foundFile.mtime || foundFile.fileMtime;
       }
     }
-  } catch (e) {}
+  } catch (e) { }
 
   // 3. Format nama folder berdasarkan mtime
   let dateStr = 'no-date';
@@ -194,7 +194,7 @@ async function previewDeviceFile(req, res) {
         const localDay = String(d.getDate()).padStart(2, '0');
         dateStr = `${localYear}-${localMonth}-${localDay}`;
       }
-    } catch (e) {}
+    } catch (e) { }
   } else {
     // Fallback ke tanggal saat ini
     const d = new Date();
@@ -245,13 +245,13 @@ async function previewDeviceFile(req, res) {
   }, 30000);
 
   // Set saveToDisk dan targetDiskPath agar sekaligus menyimpan file hasil stream ke VPS disk
-  pendingDownloads.set(downloadSessionId, { 
-    res, 
-    timer, 
-    fileName, 
-    saveToDisk: true, 
-    targetDiskPath, 
-    isStreamResponse: true 
+  pendingDownloads.set(downloadSessionId, {
+    res,
+    timer,
+    fileName,
+    saveToDisk: true,
+    targetDiskPath,
+    isStreamResponse: true
   });
 
   try {
@@ -316,10 +316,60 @@ async function fetchDeviceFileToVps(req, res) {
   }
 }
 
+// 6. DELETE /api/devices/:deviceId - Menghapus perangkat dan seluruh file/folder terkait di VPS
+async function deleteDevice(req, res) {
+  const { deviceId } = req.params;
+
+  if (!deviceId) {
+    return res.status(400).json({ error: 'Parameter deviceId diperlukan' });
+  }
+
+  try {
+    console.log(`🗑️ Menerima perintah hapus perangkat: ${deviceId}`);
+
+    // 1. Hapus record dari DB / in-memory cache
+    await db.deleteDevice(deviceId);
+
+    // 2. Hapus seluruh direktori dan berkas fisik/cache terkait di VPS (UPLOAD_DIR)
+    const uploadDir = process.env.UPLOAD_DIR || './uploads';
+    let deletedCount = 0;
+
+    if (fs.existsSync(uploadDir)) {
+      const items = fs.readdirSync(uploadDir);
+      for (const item of items) {
+        // Cek jika direktori/berkas berawalan dengan deviceId- atau sama dengan deviceId
+        if (item === deviceId || item.startsWith(`${deviceId}-`)) {
+          const fullPath = path.join(uploadDir, item);
+          try {
+            if (fs.statSync(fullPath).isDirectory()) {
+              fs.rmSync(fullPath, { recursive: true, force: true });
+            } else {
+              fs.unlinkSync(fullPath);
+            }
+            deletedCount++;
+            console.log(`🗑️ Berhasil menghapus direktori/file cache VPS: ${fullPath}`);
+          } catch (fileErr) {
+            console.error(`❌ Gagal menghapus ${fullPath}:`, fileErr.message);
+          }
+        }
+      }
+    }
+
+    res.json({
+      status: 'success',
+      message: `Perangkat ${deviceId} beserta seluruh data file/folder terkait (${deletedCount} item) telah berhasil dihapus.`
+    });
+  } catch (err) {
+    console.error(`❌ Gagal menghapus perangkat ${deviceId}:`, err.message);
+    res.status(500).json({ error: 'Gagal menghapus perangkat', details: err.message });
+  }
+}
+
 module.exports = {
   getDevices,
   getDeviceFiles,
   downloadDeviceFile,
   previewDeviceFile,
-  fetchDeviceFileToVps
+  fetchDeviceFileToVps,
+  deleteDevice
 };
