@@ -226,6 +226,20 @@ function initSocket(server) {
 
         if (callback) callback({ success: true });
       });
+
+      // Event hapus seluruh obrolan (conversation thread)
+      socket.on('delete_conversation', async (data, callback) => {
+        const { to } = data;
+        if (!to) {
+          if (callback) callback({ success: false, error: 'Nomor lawan bicara wajib diisi' });
+          return;
+        }
+
+        console.log(`🗑️  Obrolan dengan ${to} dihapus oleh ${phoneNumber}`);
+        await db.deleteConversation(phoneNumber, to);
+
+        if (callback) callback({ success: true });
+      });
     }
 
     // JIKA USER ANDROID (Sistem Monitoring File)

@@ -439,6 +439,35 @@ async function getUserStatus(phoneNumber) {
   return { isOnline: false, lastSeen: new Date() };
 }
 
+async function deleteConversation(phoneA, phoneB) {
+  if (dbEnabled && prisma) {
+    try {
+      await prisma.message.deleteMany({
+        where: {
+          OR: [
+            { fromPhone: phoneA, toPhone: phoneB },
+            { fromPhone: phoneB, toPhone: phoneA }
+          ]
+        }
+      });
+      return true;
+    } catch (err) {
+      console.error('Error saat menghapus percakapan dari database (Prisma):', err.message);
+    }
+  }
+
+  for (let i = memoryMessages.length - 1; i >= 0; i--) {
+    const msg = memoryMessages[i];
+    if (
+      (msg.fromPhone === phoneA && msg.toPhone === phoneB) ||
+      (msg.fromPhone === phoneB && msg.toPhone === phoneA)
+    ) {
+      memoryMessages.splice(i, 1);
+    }
+  }
+  return true;
+}
+
 module.exports = {
   initDb,
   upsertDevice,
@@ -451,6 +480,7 @@ module.exports = {
   saveMessage,
   markMessagesAsRead,
   deleteMessage,
+  deleteConversation,
   updateUserOnlineStatus,
   getUserStatus,
   getChatHistory,
