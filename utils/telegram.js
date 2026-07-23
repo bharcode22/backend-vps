@@ -81,8 +81,7 @@ async function notifyDeviceOnline(deviceId) {
 
   const message = `🟢 <b>PERANGKAT ONLINE</b>\n\n` +
     `📱 <b>Device ID:</b> <code>${deviceId}</code>\n` +
-    `⏰ <b>Waktu:</b> ${formattedTime} WIB\n` +
-    `⚡ <b>Status:</b> Perangkat sebelumnya offline dan sekarang telah kembali ONLINE.`;
+    `⏰ <b>Waktu:</b> ${formattedTime} WIB\n`;
 
   return sendTelegramMessage(message);
 }
