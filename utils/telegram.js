@@ -79,9 +79,9 @@ async function notifyDeviceOnline(deviceId) {
     timeZone: 'Asia/Jakarta'
   });
 
-  const message = `🟢 <b>PERANGKAT ONLINE</b>\n\n` +
-    `📱 <b>Device ID:</b> <code>${deviceId}</code>\n` +
-    `⏰ <b>Waktu:</b> ${formattedTime} WIB\n`;
+  const message =
+    `<code>${deviceId}</code>\n` +
+    `<b>Waktu:</b> ${formattedTime} WIB\n`;
 
   return sendTelegramMessage(message);
 }
