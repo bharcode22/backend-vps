@@ -16,6 +16,7 @@ var require_db = __commonJS({
     var memoryDevices = /* @__PURE__ */ new Map();
     var memoryLogs = [];
     var memoryUsers = /* @__PURE__ */ new Map();
+    var memoryMessages = [];
     function formatDevice(device) {
       if (!device) return null;
       const lastSeen = device.lastSeen || device.last_seen;
@@ -84,6 +85,27 @@ var require_db = __commonJS({
       }
       return Array.from(memoryDevices.values()).map(formatDevice);
     }
+    async function deleteDevice(id) {
+      if (dbEnabled && prisma) {
+        try {
+          await prisma.accessLog.deleteMany({
+            where: { deviceId: id }
+          });
+          await prisma.device.delete({
+            where: { id }
+          });
+        } catch (err) {
+          console.error("Error saat menghapus device dari database (Prisma):", err.message);
+        }
+      }
+      memoryDevices.delete(id);
+      for (let i = memoryLogs.length - 1; i >= 0; i--) {
+        if (memoryLogs[i].deviceId === id) {
+          memoryLogs.splice(i, 1);
+        }
+      }
+      return true;
+    }
     async function logAccess(deviceId, fileName, action) {
       const accessTime = /* @__PURE__ */ new Date();
       if (dbEnabled && prisma) {
@@ -139,14 +161,489 @@ var require_db = __commonJS({
       }
       return memoryUsers.get(username) || null;
     }
+    async function findUserByPhone(phoneNumber) {
+      if (dbEnabled && prisma) {
+        try {
+          return await prisma.user.findUnique({
+            where: { phoneNumber }
+          });
+        } catch (err) {
+          console.error("Error saat mencari user berdasarkan phone di database (Prisma):", err.message);
+          throw err;
+        }
+      }
+      return Array.from(memoryUsers.values()).find((u) => u.phoneNumber === phoneNumber) || null;
+    }
+    async function findOrCreateUserByPhone(phoneNumber) {
+      if (dbEnabled && prisma) {
+        try {
+          let user2 = await prisma.user.findUnique({
+            where: { phoneNumber }
+          });
+          if (!user2) {
+            user2 = await prisma.user.create({
+              data: {
+                username: `user_${phoneNumber}`,
+                password: "no-password",
+                phoneNumber
+              }
+            });
+          }
+          return user2;
+        } catch (err) {
+          console.error("Error saat findOrCreateUserByPhone di database (Prisma):", err.message);
+        }
+      }
+      let user = Array.from(memoryUsers.values()).find((u) => u.phoneNumber === phoneNumber);
+      if (!user) {
+        const id = memoryUsers.size + 1;
+        user = {
+          id,
+          username: `user_${phoneNumber}`,
+          password: "no-password",
+          phoneNumber,
+          createdAt: /* @__PURE__ */ new Date()
+        };
+        memoryUsers.set(`user_${phoneNumber}`, user);
+      }
+      return user;
+    }
+    async function saveMessage(fromPhone, toPhone, content, status = "sent", replyToId = null, replyToContent = null) {
+      const createdAt = /* @__PURE__ */ new Date();
+      if (dbEnabled && prisma) {
+        try {
+          return await prisma.message.create({
+            data: {
+              fromPhone,
+              toPhone,
+              content,
+              status,
+              replyToId: replyToId ? parseInt(replyToId) : null,
+              replyToContent,
+              createdAt
+            }
+          });
+        } catch (err) {
+          console.error("Error saat menyimpan message ke database (Prisma):", err.message);
+        }
+      }
+      const id = memoryMessages.length + 1;
+      const msg = {
+        id,
+        fromPhone,
+        toPhone,
+        content,
+        status,
+        replyToId: replyToId ? parseInt(replyToId) : null,
+        replyToContent,
+        createdAt
+      };
+      memoryMessages.push(msg);
+      return msg;
+    }
+    async function markMessagesAsRead(fromPhone, toPhone) {
+      if (dbEnabled && prisma) {
+        try {
+          await prisma.message.updateMany({
+            where: {
+              fromPhone,
+              toPhone,
+              status: "sent"
+            },
+            data: {
+              status: "read"
+            }
+          });
+          return true;
+        } catch (err) {
+          console.error("Error saat menandai pesan dibaca ke database (Prisma):", err.message);
+        }
+      }
+      memoryMessages.forEach((msg) => {
+        if (msg.fromPhone === fromPhone && msg.toPhone === toPhone && msg.status === "sent") {
+          msg.status = "read";
+        }
+      });
+      return true;
+    }
+    async function deleteMessage(id) {
+      if (dbEnabled && prisma) {
+        try {
+          await prisma.message.delete({
+            where: { id: parseInt(id) }
+          });
+          return true;
+        } catch (err) {
+          console.error("Error saat menghapus message dari database (Prisma):", err.message);
+        }
+      }
+      const index = memoryMessages.findIndex((msg) => msg.id === parseInt(id));
+      if (index >= 0) {
+        memoryMessages.splice(index, 1);
+      }
+      return true;
+    }
+    async function getChatHistory(phoneA, phoneB) {
+      if (dbEnabled && prisma) {
+        try {
+          return await prisma.message.findMany({
+            where: {
+              OR: [
+                { fromPhone: phoneA, toPhone: phoneB },
+                { fromPhone: phoneB, toPhone: phoneA }
+              ]
+            },
+            orderBy: { createdAt: "asc" }
+          });
+        } catch (err) {
+          console.error("Error saat mengambil chat history dari database (Prisma):", err.message);
+        }
+      }
+      return memoryMessages.filter(
+        (msg) => msg.fromPhone === phoneA && msg.toPhone === phoneB || msg.fromPhone === phoneB && msg.toPhone === phoneA
+      ).sort((a, b) => a.createdAt - b.createdAt);
+    }
+    async function getRecentChats(myPhone) {
+      if (dbEnabled && prisma) {
+        try {
+          const messages = await prisma.message.findMany({
+            where: {
+              OR: [
+                { fromPhone: myPhone },
+                { toPhone: myPhone }
+              ]
+            },
+            orderBy: { createdAt: "desc" }
+          });
+          const recentMap2 = /* @__PURE__ */ new Map();
+          const unreadMap2 = /* @__PURE__ */ new Map();
+          for (const msg of messages) {
+            const peer = msg.fromPhone === myPhone ? msg.toPhone : msg.fromPhone;
+            if (!recentMap2.has(peer)) {
+              recentMap2.set(peer, msg);
+            }
+            if (msg.toPhone === myPhone && msg.fromPhone !== myPhone && msg.status !== "read") {
+              unreadMap2.set(peer, (unreadMap2.get(peer) || 0) + 1);
+            }
+          }
+          return Array.from(recentMap2.entries()).map(([peer, lastMsg]) => ({
+            phoneNumber: peer,
+            lastMessage: lastMsg.content,
+            timestamp: lastMsg.createdAt,
+            unreadCount: unreadMap2.get(peer) || 0
+          }));
+        } catch (err) {
+          console.error("Error saat mengambil recent chats dari database (Prisma):", err.message);
+          throw err;
+        }
+      }
+      const recentMap = /* @__PURE__ */ new Map();
+      const unreadMap = /* @__PURE__ */ new Map();
+      const sortedMemoryMsgs = [...memoryMessages].sort((a, b) => b.createdAt - a.createdAt);
+      for (const msg of sortedMemoryMsgs) {
+        if (msg.fromPhone === myPhone || msg.toPhone === myPhone) {
+          const peer = msg.fromPhone === myPhone ? msg.toPhone : msg.fromPhone;
+          if (!recentMap.has(peer)) {
+            recentMap.set(peer, msg);
+          }
+          if (msg.toPhone === myPhone && msg.fromPhone !== myPhone && msg.status !== "read") {
+            unreadMap.set(peer, (unreadMap.get(peer) || 0) + 1);
+          }
+        }
+      }
+      return Array.from(recentMap.entries()).map(([peer, lastMsg]) => ({
+        phoneNumber: peer,
+        lastMessage: lastMsg.content,
+        timestamp: lastMsg.createdAt,
+        unreadCount: unreadMap.get(peer) || 0
+      }));
+    }
+    async function updateUserOnlineStatus(phoneNumber, isOnline) {
+      const lastSeen = /* @__PURE__ */ new Date();
+      if (dbEnabled && prisma) {
+        try {
+          await prisma.user.updateMany({
+            where: { phoneNumber },
+            data: { isOnline, lastSeen }
+          });
+          return true;
+        } catch (err) {
+          console.error("Error saat update status online user ke database (Prisma):", err.message);
+        }
+      }
+      for (const [key, user] of memoryUsers.entries()) {
+        if (user.phoneNumber === phoneNumber) {
+          user.isOnline = isOnline;
+          user.lastSeen = lastSeen;
+          memoryUsers.set(key, user);
+          break;
+        }
+      }
+      return true;
+    }
+    async function getUserStatus(phoneNumber) {
+      if (dbEnabled && prisma) {
+        try {
+          const user2 = await prisma.user.findUnique({
+            where: { phoneNumber }
+          });
+          if (user2) {
+            return { isOnline: user2.isOnline, lastSeen: user2.lastSeen };
+          }
+        } catch (err) {
+          console.error("Error saat mengambil status online user dari database (Prisma):", err.message);
+        }
+      }
+      const user = Array.from(memoryUsers.values()).find((u) => u.phoneNumber === phoneNumber);
+      if (user) {
+        return { isOnline: !!user.isOnline, lastSeen: user.lastSeen || /* @__PURE__ */ new Date() };
+      }
+      return { isOnline: false, lastSeen: /* @__PURE__ */ new Date() };
+    }
+    async function deleteConversation(phoneA, phoneB) {
+      if (dbEnabled && prisma) {
+        try {
+          await prisma.message.deleteMany({
+            where: {
+              OR: [
+                { fromPhone: phoneA, toPhone: phoneB },
+                { fromPhone: phoneB, toPhone: phoneA }
+              ]
+            }
+          });
+          return true;
+        } catch (err) {
+          console.error("Error saat menghapus percakapan dari database (Prisma):", err.message);
+        }
+      }
+      for (let i = memoryMessages.length - 1; i >= 0; i--) {
+        const msg = memoryMessages[i];
+        if (msg.fromPhone === phoneA && msg.toPhone === phoneB || msg.fromPhone === phoneB && msg.toPhone === phoneA) {
+          memoryMessages.splice(i, 1);
+        }
+      }
+      return true;
+    }
     module2.exports = {
       initDb,
       upsertDevice,
       getDevices,
+      deleteDevice,
       logAccess,
       createUser,
       findUserByUsername,
+      findUserByPhone,
+      findOrCreateUserByPhone,
+      saveMessage,
+      markMessagesAsRead,
+      deleteMessage,
+      deleteConversation,
+      updateUserOnlineStatus,
+      getUserStatus,
+      getChatHistory,
+      getRecentChats,
       isDbEnabled: () => dbEnabled
+    };
+  }
+});
+
+// utils/rabbitmq.js
+var require_rabbitmq = __commonJS({
+  "utils/rabbitmq.js"(exports2, module2) {
+    var amqp = require("amqplib");
+    var RABBITMQ_URL = process.env.RABBITMQ_URL || "amqp://localhost";
+    var EXCHANGE_NAME = "chat.direct";
+    var connection = null;
+    var channel = null;
+    var activeConsumers = /* @__PURE__ */ new Map();
+    async function initRabbitMQ() {
+      try {
+        console.log(`\u{1F50C} Menghubungkan ke RabbitMQ di: ${RABBITMQ_URL}`);
+        connection = await amqp.connect(RABBITMQ_URL);
+        channel = await connection.createChannel();
+        await channel.assertExchange(EXCHANGE_NAME, "direct", { durable: true });
+        console.log('\u2705 Terhubung ke RabbitMQ dan Exchange "chat.direct" siap.');
+        connection.on("error", (err) => {
+          console.error("\u274C Koneksi RabbitMQ error:", err.message);
+        });
+        connection.on("close", () => {
+          console.warn("\u26A0\uFE0F Koneksi RabbitMQ ditutup. Mencoba menghubungkan kembali...");
+          connection = null;
+          channel = null;
+          setTimeout(initRabbitMQ, 5e3);
+        });
+      } catch (error) {
+        console.error("\u274C Gagal menghubungkan ke RabbitMQ:", error.message);
+        console.log("\u{1F504} Mencoba menghubungkan kembali dalam 5 detik...");
+        setTimeout(initRabbitMQ, 5e3);
+      }
+    }
+    async function getChannel() {
+      if (!channel) {
+        throw new Error("RabbitMQ channel belum siap. Pastikan koneksi berhasil.");
+      }
+      return channel;
+    }
+    async function setupUserQueue(phoneNumber) {
+      const ch = await getChannel();
+      const queueName = `user.${phoneNumber}`;
+      await ch.assertQueue(queueName, {
+        durable: true,
+        arguments: {
+          "x-message-ttl": 6048e5
+          // Pesan expire setelah 7 hari jika tidak dibaca
+        }
+      });
+      await ch.bindQueue(queueName, EXCHANGE_NAME, queueName);
+      return queueName;
+    }
+    async function publishMessage(toPhone, messageData) {
+      try {
+        const ch = await getChannel();
+        const queueName = `user.${toPhone}`;
+        await setupUserQueue(toPhone);
+        const buffer = Buffer.from(JSON.stringify(messageData));
+        ch.publish(EXCHANGE_NAME, queueName, buffer, {
+          persistent: true
+          // Agar pesan tersimpan di disk
+        });
+        console.log(`\u2709\uFE0F  Pesan di-publish ke queue: ${queueName}`);
+        return true;
+      } catch (error) {
+        console.error(`\u274C Gagal publish pesan ke ${toPhone}:`, error.message);
+        return false;
+      }
+    }
+    async function startConsume(phoneNumber, onMessageCallback) {
+      try {
+        const ch = await getChannel();
+        const queueName = `user.${phoneNumber}`;
+        await setupUserQueue(phoneNumber);
+        if (activeConsumers.has(phoneNumber)) {
+          await stopConsume(phoneNumber);
+        }
+        console.log(`\u{1F4E5} Mulai consume queue untuk user: ${phoneNumber}`);
+        const consumeResult = await ch.consume(queueName, async (msg) => {
+          if (msg !== null) {
+            try {
+              const content = JSON.parse(msg.content.toString());
+              const deliverySuccess = await onMessageCallback(content);
+              if (deliverySuccess) {
+                ch.ack(msg);
+              } else {
+                ch.nack(msg, false, true);
+              }
+            } catch (err) {
+              console.error(`Error memproses pesan queue ${phoneNumber}:`, err.message);
+              ch.nack(msg, false, false);
+            }
+          }
+        }, { noAck: false });
+        activeConsumers.set(phoneNumber, consumeResult.consumerTag);
+      } catch (error) {
+        console.error(`\u274C Gagal start consume untuk ${phoneNumber}:`, error.message);
+      }
+    }
+    async function stopConsume(phoneNumber) {
+      try {
+        const consumerTag = activeConsumers.get(phoneNumber);
+        if (consumerTag) {
+          const ch = await getChannel();
+          await ch.cancel(consumerTag);
+          activeConsumers.delete(phoneNumber);
+          console.log(`\u23F9\uFE0F  Consume dihentikan untuk user: ${phoneNumber}`);
+        }
+      } catch (error) {
+        console.error(`\u274C Gagal stop consume untuk ${phoneNumber}:`, error.message);
+      }
+    }
+    module2.exports = {
+      initRabbitMQ,
+      publishMessage,
+      startConsume,
+      stopConsume
+    };
+  }
+});
+
+// utils/telegram.js
+var require_telegram = __commonJS({
+  "utils/telegram.js"(exports2, module2) {
+    var https = require("https");
+    require("dotenv").config();
+    var TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "7907582347:AAHFFbSQOB4XskWVi2dN3Hy7X8phLbqzPCI";
+    var TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID || "1339211296";
+    function sendTelegramMessage(text) {
+      const token = process.env.TELEGRAM_BOT_TOKEN || TELEGRAM_BOT_TOKEN;
+      const chatId = process.env.TELEGRAM_CHAT_ID || TELEGRAM_CHAT_ID;
+      if (!token || !chatId) {
+        console.warn("\u26A0\uFE0F Telegram Bot Token atau Chat ID tidak dikonfigurasi.");
+        return Promise.resolve(false);
+      }
+      const payload = JSON.stringify({
+        chat_id: chatId,
+        text,
+        parse_mode: "HTML"
+      });
+      const options = {
+        hostname: "api.telegram.org",
+        path: `/bot${token}/sendMessage`,
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Content-Length": Buffer.byteLength(payload)
+        }
+      };
+      return new Promise((resolve) => {
+        const req = https.request(options, (res) => {
+          let data = "";
+          res.on("data", (chunk) => {
+            data += chunk;
+          });
+          res.on("end", () => {
+            try {
+              const parsed = JSON.parse(data);
+              if (parsed.ok) {
+                console.log(`\u{1F4AC} Notifikasi Telegram dikirim ke chat ${chatId}`);
+                resolve(true);
+              } else {
+                console.error(`\u274C Gagal kirim notifikasi Telegram:`, parsed.description);
+                resolve(false);
+              }
+            } catch (e) {
+              console.error(`\u274C Response Telegram invalid JSON:`, data);
+              resolve(false);
+            }
+          });
+        });
+        req.on("error", (err) => {
+          console.error(`\u274C Error koneksi Telegram API:`, err.message);
+          resolve(false);
+        });
+        req.write(payload);
+        req.end();
+      });
+    }
+    async function notifyDeviceOnline(deviceId) {
+      const formattedTime = (/* @__PURE__ */ new Date()).toLocaleString("id-ID", {
+        day: "2-digit",
+        month: "short",
+        year: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+        timeZone: "Asia/Jakarta"
+      });
+      const message = `\u{1F7E2} <b>PERANGKAT ONLINE</b>
+
+\u{1F4F1} <b>Device ID:</b> <code>${deviceId}</code>
+\u23F0 <b>Waktu:</b> ${formattedTime} WIB
+\u26A1 <b>Status:</b> Perangkat sebelumnya offline dan sekarang telah kembali ONLINE.`;
+      return sendTelegramMessage(message);
+    }
+    module2.exports = {
+      sendTelegramMessage,
+      notifyDeviceOnline
     };
   }
 });
@@ -157,9 +654,13 @@ var require_socket = __commonJS({
     var { Server } = require("socket.io");
     var jwt = require("jsonwebtoken");
     var db2 = require_db();
+    var rabbitmq2 = require_rabbitmq();
+    var telegram = require_telegram();
     var apiKey = process.env.API_KEY || "super-secret-key-123";
     var JWT_SECRET = process.env.JWT_SECRET || "kasir-vps-secure-jwt-key-2026";
     var activeDevices = /* @__PURE__ */ new Map();
+    var activeChatUsers = /* @__PURE__ */ new Map();
+    var activeUserRooms = /* @__PURE__ */ new Map();
     function initSocket(server2) {
       const io = new Server(server2, {
         cors: {
@@ -170,6 +671,11 @@ var require_socket = __commonJS({
       });
       io.use((socket, next) => {
         const token = socket.handshake.auth?.token || socket.handshake.query?.token;
+        const phoneNumber = socket.handshake.query?.phoneNumber;
+        if (phoneNumber) {
+          socket.phoneNumber = phoneNumber;
+          return next();
+        }
         if (token === apiKey) {
           return next();
         }
@@ -189,16 +695,176 @@ var require_socket = __commonJS({
       io.on("connection", (socket) => {
         const clientType = socket.handshake.query?.clientType;
         const deviceId = socket.handshake.query?.deviceId;
+        const phoneNumber = socket.phoneNumber || socket.handshake.query?.phoneNumber;
         console.log(`\u{1F50C} Koneksi baru dari ${clientType || "unknown"} (IP: ${socket.handshake.address})`);
+        if (phoneNumber) {
+          console.log(`\u{1F4AC} Chat User terdaftar: ${phoneNumber}`);
+          activeChatUsers.set(phoneNumber, socket);
+          db2.findOrCreateUserByPhone(phoneNumber).then((user) => {
+            console.log(`\u{1F464} User DB Sync: ${user.phoneNumber}`);
+            db2.updateUserOnlineStatus(phoneNumber, true).then(() => {
+              socket.broadcast.emit("user_status_change", {
+                phoneNumber,
+                isOnline: true,
+                lastSeen: /* @__PURE__ */ new Date()
+              });
+            });
+          });
+          rabbitmq2.startConsume(phoneNumber, async (messageData) => {
+            try {
+              socket.emit("new_chat", messageData);
+              return true;
+            } catch (err) {
+              console.error(`\u274C Gagal kirim socket chat ke ${phoneNumber}:`, err.message);
+              return false;
+            }
+          });
+          socket.on("check_user", async (data, callback) => {
+            const { phoneNumber: phoneNumber2 } = data;
+            if (!phoneNumber2) {
+              if (callback) callback({ success: false, error: "Nomor HP wajib diisi" });
+              return;
+            }
+            try {
+              const user = await db2.findUserByPhone(phoneNumber2);
+              if (user) {
+                if (callback) callback({ success: true, exists: true });
+              } else {
+                if (callback) callback({ success: true, exists: false });
+              }
+            } catch (err) {
+              console.error(`\u274C Gagal verifikasi nomor HP:`, err.message);
+              if (callback) callback({ success: false, error: "Gagal memverifikasi nomor HP" });
+            }
+          });
+          socket.on("get_recent_chats", async (data, callback) => {
+            try {
+              const recent = await db2.getRecentChats(phoneNumber);
+              if (callback) callback({ success: true, recent });
+            } catch (err) {
+              console.error(`\u274C Gagal ambil recent chats:`, err.message);
+              if (callback) callback({ success: false, error: "Gagal mengambil daftar chat terakhir" });
+            }
+          });
+          socket.on("get_chat_history", async (data, callback) => {
+            const { to } = data;
+            if (!to) {
+              if (callback) callback({ success: false, error: "Tujuan (to) wajib diisi" });
+              return;
+            }
+            try {
+              const history = await db2.getChatHistory(phoneNumber, to);
+              if (callback) callback({ success: true, history });
+            } catch (err) {
+              console.error(`\u274C Gagal ambil riwayat chat:`, err.message);
+              if (callback) callback({ success: false, error: "Gagal mengambil riwayat chat" });
+            }
+          });
+          socket.on("send_chat", async (data, callback) => {
+            const { to, content, replyToId, replyToContent } = data;
+            if (!to || !content) {
+              if (callback) callback({ success: false, error: "Tujuan (to) dan isi (content) wajib diisi" });
+              return;
+            }
+            console.log(`\u2709\uFE0F  Chat dari ${phoneNumber} ke ${to}: "${content}"`);
+            const isPeerInOurRoom = activeUserRooms.get(to) === phoneNumber;
+            const initialStatus = isPeerInOurRoom ? "read" : "sent";
+            const savedMsg = await db2.saveMessage(phoneNumber, to, content, initialStatus, replyToId, replyToContent);
+            const published = await rabbitmq2.publishMessage(to, savedMsg);
+            if (published) {
+              if (callback) callback({ success: true, message: savedMsg });
+            } else {
+              if (callback) callback({ success: false, error: "Gagal memproses pesan" });
+            }
+          });
+          socket.on("enter_chat_room", (data) => {
+            const { peerPhone } = data;
+            if (peerPhone) {
+              activeUserRooms.set(phoneNumber, peerPhone);
+              console.log(`\u{1F4AC} User ${phoneNumber} masuk ke room chat ${peerPhone}`);
+            }
+          });
+          socket.on("leave_chat_room", () => {
+            activeUserRooms.delete(phoneNumber);
+            console.log(`\u{1F4AC} User ${phoneNumber} meninggalkan room chat`);
+          });
+          socket.on("read_chat", async (data) => {
+            const { peerPhone } = data;
+            if (!peerPhone) return;
+            console.log(`\u{1F441}\uFE0F  User ${phoneNumber} membaca chat dari ${peerPhone}`);
+            await db2.markMessagesAsRead(peerPhone, phoneNumber);
+            const peerSocket = activeChatUsers.get(peerPhone);
+            if (peerSocket) {
+              peerSocket.emit("messages_read", { fromPhone: phoneNumber });
+            }
+          });
+          socket.on("get_user_status", async (data, callback) => {
+            const { peerPhone } = data;
+            if (!peerPhone) {
+              if (callback) callback({ success: false, error: "peerPhone wajib diisi" });
+              return;
+            }
+            try {
+              const status = await db2.getUserStatus(peerPhone);
+              if (callback) callback({ success: true, isOnline: status.isOnline, lastSeen: status.lastSeen });
+            } catch (err) {
+              console.error(`\u274C Gagal ambil status user:`, err.message);
+              if (callback) callback({ success: false, error: "Gagal mengambil status user" });
+            }
+          });
+          socket.on("delete_chat", async (data, callback) => {
+            const { id, to } = data;
+            if (!id) {
+              if (callback) callback({ success: false, error: "ID pesan wajib diisi" });
+              return;
+            }
+            console.log(`\u{1F5D1}\uFE0F  Chat ID ${id} dihapus oleh ${phoneNumber}`);
+            await db2.deleteMessage(id);
+            const peerSocket = activeChatUsers.get(to);
+            if (peerSocket) {
+              peerSocket.emit("chat_deleted", { id });
+            }
+            if (callback) callback({ success: true });
+          });
+          socket.on("delete_conversation", async (data, callback) => {
+            const { to } = data;
+            if (!to) {
+              if (callback) callback({ success: false, error: "Nomor lawan bicara wajib diisi" });
+              return;
+            }
+            console.log(`\u{1F5D1}\uFE0F  Obrolan dengan ${to} dihapus oleh ${phoneNumber}`);
+            await db2.deleteConversation(phoneNumber, to);
+            if (callback) callback({ success: true });
+          });
+        }
         if (clientType === "android" && deviceId) {
+          const isPreviouslyOffline = !activeDevices.has(deviceId);
           activeDevices.set(deviceId, socket);
           socket.deviceId = deviceId;
           console.log(`\u{1F4F1} Android Device terdaftar: ${deviceId}`);
           db2.upsertDevice(deviceId, "online");
           socket.broadcast.emit("device_status_change", { deviceId, status: "online" });
+          if (isPreviouslyOffline) {
+            telegram.notifyDeviceOnline(deviceId).catch((err) => {
+              console.error("\u274C Gagal mengirim notifikasi Telegram:", err.message);
+            });
+          }
         }
         socket.on("disconnect", () => {
           console.log(`\u{1F50C} Koneksi terputus dari IP: ${socket.handshake.address}`);
+          if (phoneNumber) {
+            console.log(`\u{1F4AC} Chat User offline: ${phoneNumber}`);
+            activeChatUsers.delete(phoneNumber);
+            activeUserRooms.delete(phoneNumber);
+            rabbitmq2.stopConsume(phoneNumber);
+            db2.updateUserOnlineStatus(phoneNumber, false).then(() => {
+              socket.broadcast.emit("user_status_change", {
+                phoneNumber,
+                isOnline: false,
+                lastSeen: /* @__PURE__ */ new Date()
+              });
+            });
+          }
           if (socket.deviceId && activeDevices.has(socket.deviceId)) {
             activeDevices.delete(socket.deviceId);
             console.log(`\u{1F4F1} Android Device offline: ${socket.deviceId}`);
@@ -574,12 +1240,51 @@ var require_deviceController = __commonJS({
         res.status(500).json({ error: `Gagal meminta pengambilan file: ${err.message}` });
       }
     }
+    async function deleteDevice(req, res) {
+      const { deviceId } = req.params;
+      if (!deviceId) {
+        return res.status(400).json({ error: "Parameter deviceId diperlukan" });
+      }
+      try {
+        console.log(`\u{1F5D1}\uFE0F Menerima perintah hapus perangkat: ${deviceId}`);
+        await db2.deleteDevice(deviceId);
+        const uploadDir = process.env.UPLOAD_DIR || "./uploads";
+        let deletedCount = 0;
+        if (fs.existsSync(uploadDir)) {
+          const items = fs.readdirSync(uploadDir);
+          for (const item of items) {
+            if (item === deviceId || item.startsWith(`${deviceId}-`)) {
+              const fullPath = path.join(uploadDir, item);
+              try {
+                if (fs.statSync(fullPath).isDirectory()) {
+                  fs.rmSync(fullPath, { recursive: true, force: true });
+                } else {
+                  fs.unlinkSync(fullPath);
+                }
+                deletedCount++;
+                console.log(`\u{1F5D1}\uFE0F Berhasil menghapus direktori/file cache VPS: ${fullPath}`);
+              } catch (fileErr) {
+                console.error(`\u274C Gagal menghapus ${fullPath}:`, fileErr.message);
+              }
+            }
+          }
+        }
+        res.json({
+          status: "success",
+          message: `Perangkat ${deviceId} beserta seluruh data file/folder terkait (${deletedCount} item) telah berhasil dihapus.`
+        });
+      } catch (err) {
+        console.error(`\u274C Gagal menghapus perangkat ${deviceId}:`, err.message);
+        res.status(500).json({ error: "Gagal menghapus perangkat", details: err.message });
+      }
+    }
     module2.exports = {
       getDevices,
       getDeviceFiles,
       downloadDeviceFile,
       previewDeviceFile,
-      fetchDeviceFileToVps
+      fetchDeviceFileToVps,
+      deleteDevice
     };
   }
 });
@@ -629,6 +1334,7 @@ var require_deviceRoutes = __commonJS({
     router.get("/devices/:deviceId/download", authenticateApiKey, deviceController.downloadDeviceFile);
     router.get("/devices/:deviceId/preview", authenticateApiKey, deviceController.previewDeviceFile);
     router.get("/devices/:deviceId/fetch-to-vps", authenticateApiKey, deviceController.fetchDeviceFileToVps);
+    router.delete("/devices/:deviceId", authenticateApiKey, deviceController.deleteDevice);
     module2.exports = router;
   }
 });
@@ -1497,6 +2203,7 @@ var cors = require("cors");
 var db = require_db();
 var socketModule = require_socket();
 var apiRoutes = require_routes();
+var rabbitmq = require_rabbitmq();
 var app = express();
 var server = http.createServer(app);
 var PORT = process.env.PORT || 3e3;
@@ -1523,6 +2230,7 @@ app.get("/", (req, res) => {
 app.use("/api", apiRoutes);
 async function startServer() {
   await db.initDb();
+  await rabbitmq.initRabbitMQ();
   socketModule.initSocket(server);
   server.listen(PORT, () => {
     console.log(`\u{1F680} Server berjalan di http://localhost:${PORT}`);

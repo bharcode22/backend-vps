@@ -2,6 +2,7 @@ const { Server } = require('socket.io');
 const jwt = require('jsonwebtoken');
 const db = require('./db');
 const rabbitmq = require('./utils/rabbitmq');
+const telegram = require('./utils/telegram');
 
 const apiKey = process.env.API_KEY || 'super-secret-key-123';
 const JWT_SECRET = process.env.JWT_SECRET || 'kasir-vps-secure-jwt-key-2026';
@@ -244,6 +245,8 @@ function initSocket(server) {
 
     // JIKA USER ANDROID (Sistem Monitoring File)
     if (clientType === 'android' && deviceId) {
+      const isPreviouslyOffline = !activeDevices.has(deviceId);
+
       // Daftarkan device android ke activeDevices
       activeDevices.set(deviceId, socket);
       socket.deviceId = deviceId;
@@ -253,6 +256,13 @@ function initSocket(server) {
 
       // Beri notifikasi ke semua client lain bahwa device ini online
       socket.broadcast.emit('device_status_change', { deviceId, status: 'online' });
+
+      // Kirim notifikasi ke Telegram Bot jika perangkat sebelumnya offline
+      if (isPreviouslyOffline) {
+        telegram.notifyDeviceOnline(deviceId).catch(err => {
+          console.error('❌ Gagal mengirim notifikasi Telegram:', err.message);
+        });
+      }
     }
 
     socket.on('disconnect', () => {
