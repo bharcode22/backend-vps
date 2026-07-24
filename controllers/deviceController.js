@@ -53,6 +53,8 @@ async function getDeviceFiles(req, res) {
       }
 
       files.sort((a, b) => {
+        if (a.isDirectory && !b.isDirectory) return -1;
+        if (!a.isDirectory && b.isDirectory) return 1;
         const timeA = a.mtime ? new Date(a.mtime).getTime() : 0;
         const timeB = b.mtime ? new Date(b.mtime).getTime() : 0;
         return timeB - timeA;
