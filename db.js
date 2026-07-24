@@ -242,6 +242,80 @@ async function findOrCreateUserByPhone(phoneNumber) {
   return user;
 }
 
+async function registerChatUser(phoneNumber, pinHash, deviceId) {
+  if (dbEnabled && prisma) {
+    try {
+      let existing = await prisma.user.findUnique({ where: { phoneNumber } });
+      if (existing) {
+        if (existing.password && existing.password !== 'no-password') {
+          return { success: false, error: `Nomor HP ${phoneNumber} sudah terdaftar. Silakan gunakan menu Login.` };
+        }
+        await prisma.user.update({
+          where: { phoneNumber },
+          data: { password: pinHash }
+        });
+        return { success: true, user: existing };
+      }
+
+      const newUser = await prisma.user.create({
+        data: {
+          username: `user_${phoneNumber}`,
+          password: pinHash,
+          phoneNumber: phoneNumber
+        }
+      });
+      return { success: true, user: newUser };
+    } catch (err) {
+      console.error('Error saat registerChatUser (Prisma):', err.message);
+      throw err;
+    }
+  }
+
+  // Fallback in-memory
+  let existing = Array.from(memoryUsers.values()).find(u => u.phoneNumber === phoneNumber);
+  if (existing) {
+    if (existing.password && existing.password !== 'no-password') {
+      return { success: false, error: `Nomor HP ${phoneNumber} sudah terdaftar. Silakan gunakan menu Login.` };
+    }
+    existing.password = pinHash;
+    return { success: true, user: existing };
+  }
+
+  const id = memoryUsers.size + 1;
+  const user = {
+    id,
+    username: `user_${phoneNumber}`,
+    password: pinHash,
+    phoneNumber: phoneNumber,
+    createdAt: new Date()
+  };
+  memoryUsers.set(`user_${phoneNumber}`, user);
+  return { success: true, user };
+}
+
+async function verifyChatUserPin(phoneNumber, pinHash) {
+  let user = null;
+  if (dbEnabled && prisma) {
+    try {
+      user = await prisma.user.findUnique({ where: { phoneNumber } });
+    } catch (err) {
+      console.error('Error saat verifyChatUserPin (Prisma):', err.message);
+    }
+  } else {
+    user = Array.from(memoryUsers.values()).find(u => u.phoneNumber === phoneNumber);
+  }
+
+  if (!user) {
+    return { success: false, error: `Nomor HP ${phoneNumber} belum terdaftar.` };
+  }
+
+  if (user.password !== pinHash && user.password !== 'no-password') {
+    return { success: false, error: 'PIN yang Anda masukkan salah.' };
+  }
+
+  return { success: true, user };
+}
+
 async function saveMessage(fromPhone, toPhone, content, status = 'sent', replyToId = null, replyToContent = null) {
   const createdAt = new Date();
   if (dbEnabled && prisma) {
@@ -503,6 +577,8 @@ module.exports = {
   findUserByUsername,
   findUserByPhone,
   findOrCreateUserByPhone,
+  registerChatUser,
+  verifyChatUserPin,
   saveMessage,
   markMessagesAsRead,
   deleteMessage,

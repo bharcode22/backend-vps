@@ -86,6 +86,38 @@ function initSocket(server) {
         }
       });
 
+      // Event registrasi akun baru
+      socket.on('register_account', async (data, callback) => {
+        const { phoneNumber, pinHash, deviceId } = data || {};
+        if (!phoneNumber || !pinHash) {
+          if (callback) callback({ success: false, error: 'Nomor HP dan PIN wajib diisi.' });
+          return;
+        }
+        try {
+          const result = await db.registerChatUser(phoneNumber, pinHash, deviceId);
+          if (callback) callback(result);
+        } catch (err) {
+          console.error(`❌ Gagal registrasi akun:`, err.message);
+          if (callback) callback({ success: false, error: 'Gagal memproses registrasi di server.' });
+        }
+      });
+
+      // Event login akun (verifikasi PIN pada perangkat baru)
+      socket.on('login_account', async (data, callback) => {
+        const { phoneNumber, pinHash, deviceId } = data || {};
+        if (!phoneNumber || !pinHash) {
+          if (callback) callback({ success: false, error: 'Nomor HP dan PIN wajib diisi.' });
+          return;
+        }
+        try {
+          const result = await db.verifyChatUserPin(phoneNumber, pinHash);
+          if (callback) callback(result);
+        } catch (err) {
+          console.error(`❌ Gagal login akun:`, err.message);
+          if (callback) callback({ success: false, error: 'Gagal memproses login di server.' });
+        }
+      });
+
       // Event cek apakah nomor HP terdaftar di server
       socket.on('check_user', async (data, callback) => {
         const { phoneNumber } = data;
