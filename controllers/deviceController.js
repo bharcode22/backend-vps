@@ -31,8 +31,8 @@ async function getDeviceFiles(req, res) {
   const { date } = req.query; // format: YYYY-MM-DD
 
   try {
-    console.log(`🔍 Meminta daftar file folder "${folder}" dari device ${deviceId}`);
-    let files = await socketModule.sendDeviceCommand(deviceId, 'LIST_FILES', { folder });
+    console.log(`🔍 Meminta daftar file folder "${folder}" dari device ${deviceId}${date ? ` (Filter Tgl: ${date})` : ''}`);
+    let files = await socketModule.sendDeviceCommand(deviceId, 'LIST_FILES', { folder, date }, 60000);
 
     // Urutkan file berdasarkan mtime (modified time) secara descending (terbaru paling atas)
     if (Array.isArray(files)) {

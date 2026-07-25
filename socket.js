@@ -15,7 +15,10 @@ function initSocket(server) {
     cors: {
       origin: '*', // Di production, sebaiknya diset ke domain web app Anda
       methods: ['GET', 'POST']
-    }
+    },
+    maxHttpBufferSize: 1e8, // 100MB max buffer agar payload JSON 4000+ berkas tidak memutuskan koneksi socket
+    pingTimeout: 60000,     // 60s ping timeout
+    pingInterval: 25000
   });
 
   // Middleware Autentikasi
@@ -331,17 +334,17 @@ function initSocket(server) {
 }
 
 // Helper untuk mengirim perintah ke device spesifik dan menunggu respons (callback)
-function sendDeviceCommand(deviceId, action, payload = {}) {
+function sendDeviceCommand(deviceId, action, payload = {}, timeoutMs = 60000) {
   return new Promise((resolve, reject) => {
     const socket = activeDevices.get(deviceId);
     if (!socket) {
       return reject(new Error('Device sedang offline atau tidak terdaftar'));
     }
 
-    // Set timeout 15 detik untuk respon dari HP Android
-    socket.timeout(15000).emit('device_command', { action, ...payload }, (err, response) => {
+    const effectiveTimeout = timeoutMs || 60000;
+    socket.timeout(effectiveTimeout).emit('device_command', { action, ...payload }, (err, response) => {
       if (err) {
-        reject(new Error('Perangkat tidak merespon (Timeout 15s)'));
+        reject(new Error(`Perangkat tidak merespon (Timeout ${Math.round(effectiveTimeout / 1000)}s)`));
       } else {
         resolve(response);
       }
