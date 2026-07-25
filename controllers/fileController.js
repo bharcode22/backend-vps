@@ -8,7 +8,16 @@ const pendingDownloads = require('../utils/pendingDownloads');
 // 1. GET /api/files - Menyeleksi berkas dari cache JSON lokal VPS (select & filter tgl)
 async function getFiles(req, res) {
   const folder = req.query.folder || 'DCIM/Camera';
-  const { date, deviceId } = req.query;
+  let { date, deviceId } = req.query;
+
+  // Jika date bernilai 'today', tentukan tanggal hari ini (YYYY-MM-DD)
+  if (date === 'today') {
+    const now = new Date();
+    const localYear = now.getFullYear();
+    const localMonth = String(now.getMonth() + 1).padStart(2, '0');
+    const localDay = String(now.getDate()).padStart(2, '0');
+    date = `${localYear}-${localMonth}-${localDay}`;
+  }
 
   // Resolve deviceId
   let activeDeviceId = deviceId;
