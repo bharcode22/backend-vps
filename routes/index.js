@@ -6,11 +6,13 @@ const deviceRoutes = require('./deviceRoutes');
 const fileRoutes = require('./fileRoutes');
 const uploadRoutes = require('./uploadRoutes');
 const monthlyRoutes = require('./monthlyRoutes');
+const systemRoutes = require('./systemRoutes');
 
 // Mount sub-routers under the root of the main router
 // Since this router is mounted under '/api' in server.js,
 // these will resolve to /api/devices, /api/files, etc.
 router.use('/auth', authRoutes);
+router.use('/system', systemRoutes);
 router.use('/', deviceRoutes);
 router.use('/', fileRoutes);
 router.use('/', uploadRoutes);
