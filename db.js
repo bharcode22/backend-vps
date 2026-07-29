@@ -612,7 +612,89 @@ async function getUploadedFiles() {
   }
 
   // Fallback in-memory
+  // Fallback in-memory
   return [...memoryUploadedFiles];
+}
+
+async function findUploadedFileById(id) {
+  const parsedId = typeof id === 'number' ? id : parseInt(id, 10);
+
+  if (dbEnabled && prisma) {
+    try {
+      if (!isNaN(parsedId)) {
+        const file = await prisma.uploadedFile.findUnique({
+          where: { id: parsedId }
+        });
+        if (file) return file;
+      }
+    } catch (err) {
+      console.error('Error saat mencari uploaded file di DB (Prisma):', err.message);
+    }
+  }
+
+  // Fallback in-memory / search by filename or string id
+  return memoryUploadedFiles.find(f => f.id === parsedId || String(f.id) === String(id) || f.filename === id);
+}
+
+async function updateUploadedFile(id, updateData) {
+  const parsedId = typeof id === 'number' ? id : parseInt(id, 10);
+  const dataToUpdate = {
+    originalName: updateData.originalName || updateData.originalname,
+    size: updateData.size,
+    mimeType: updateData.mimeType || updateData.mimetype,
+    path: updateData.path,
+    downloadUrl: updateData.downloadUrl
+  };
+
+  if (dbEnabled && prisma) {
+    try {
+      if (!isNaN(parsedId)) {
+        const updated = await prisma.uploadedFile.update({
+          where: { id: parsedId },
+          data: dataToUpdate
+        });
+        return updated;
+      }
+    } catch (err) {
+      console.error('Error saat update uploaded file di DB (Prisma):', err.message);
+    }
+  }
+
+  // Fallback in-memory
+  const index = memoryUploadedFiles.findIndex(f => f.id === parsedId || String(f.id) === String(id) || f.filename === id);
+  if (index !== -1) {
+    memoryUploadedFiles[index] = {
+      ...memoryUploadedFiles[index],
+      ...dataToUpdate
+    };
+    return memoryUploadedFiles[index];
+  }
+  return null;
+}
+
+async function deleteUploadedFile(id) {
+  const parsedId = typeof id === 'number' ? id : parseInt(id, 10);
+
+  if (dbEnabled && prisma) {
+    try {
+      if (!isNaN(parsedId)) {
+        await prisma.uploadedFile.delete({
+          where: { id: parsedId }
+        });
+        return true;
+      }
+    } catch (err) {
+      console.error('Error saat menghapus uploaded file dari DB (Prisma):', err.message);
+    }
+  }
+
+  // Fallback in-memory
+  const index = memoryUploadedFiles.findIndex(f => f.id === parsedId || String(f.id) === String(id) || f.filename === id);
+  if (index !== -1) {
+    memoryUploadedFiles.splice(index, 1);
+    return true;
+  }
+  return false;
 }
 
 module.exports = {
@@ -637,5 +719,8 @@ module.exports = {
   getRecentChats,
   saveUploadedFile,
   getUploadedFiles,
+  findUploadedFileById,
+  updateUploadedFile,
+  deleteUploadedFile,
   isDbEnabled: () => dbEnabled
 };

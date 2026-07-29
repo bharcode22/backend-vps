@@ -146,8 +146,96 @@ async function getUploadedFilesList(req, res) {
   }
 }
 
+// 4. PUT /api/upload/files/:id - Replace existing file while keeping exact same download URL
+async function handleUpdateFile(req, res) {
+  try {
+    const { id } = req.params;
+    if (!req.file) {
+      return res.status(400).json({ error: 'Tidak ada file baru yang diunggah untuk penggantian' });
+    }
+
+    const existing = await db.findUploadedFileById(id);
+    if (!existing) {
+      // Hapus file temp multer jika record tidak ditemukan
+      if (req.file.path && fs.existsSync(req.file.path)) {
+        fs.unlinkSync(req.file.path);
+      }
+      return res.status(404).json({ error: 'File tidak ditemukan di database' });
+    }
+
+    // Overwrite file fisik di disk dengan file baru (menggunakan path fisik yang sama)
+    if (fs.existsSync(existing.path)) {
+      fs.copyFileSync(req.file.path, existing.path);
+      // Hapus file temp dari multer
+      fs.unlinkSync(req.file.path);
+    } else {
+      // Jika file fisik lama tidak ditemukan di disk, pindahkan file temp ke lokasi existing.path
+      fs.renameSync(req.file.path, existing.path);
+    }
+
+    // Update metadata di Database (downloadUrl dan filename TETAP SAMA)
+    const updatePayload = {
+      originalName: req.file.originalname,
+      size: req.file.size,
+      mimeType: req.file.mimetype,
+      path: existing.path,
+      downloadUrl: existing.downloadUrl
+    };
+
+    const updatedRecord = await db.updateUploadedFile(existing.id || id, updatePayload);
+
+    console.log(`🔄 File ID ${id} (${existing.filename}) berhasil diperbarui dengan isi file baru.`);
+    res.json({
+      status: 'success',
+      message: 'File berhasil diperbarui (URL download tetap sama)',
+      file: updatedRecord || { ...existing, ...updatePayload }
+    });
+  } catch (err) {
+    console.error('❌ Error saat update file:', err.message);
+    if (req.file && req.file.path && fs.existsSync(req.file.path)) {
+      fs.unlinkSync(req.file.path);
+    }
+    res.status(500).json({ error: 'Gagal memperbarui file' });
+  }
+}
+
+// 5. DELETE /api/upload/files/:id - Delete file physically & from DB
+async function handleDeleteFile(req, res) {
+  try {
+    const { id } = req.params;
+    const existing = await db.findUploadedFileById(id);
+
+    if (!existing) {
+      return res.status(404).json({ error: 'File tidak ditemukan' });
+    }
+
+    // Hapus file fisik dari disk VPS
+    if (existing.path && fs.existsSync(existing.path)) {
+      try {
+        fs.unlinkSync(existing.path);
+        console.log(`🗑️  File fisik terhapus dari VPS: ${existing.path}`);
+      } catch (e) {
+        console.warn(`⚠️  Gagal menghapus file fisik ${existing.path}:`, e.message);
+      }
+    }
+
+    // Hapus metadata dari DB
+    await db.deleteUploadedFile(existing.id || id);
+
+    res.json({
+      status: 'success',
+      message: 'File berhasil dihapus'
+    });
+  } catch (err) {
+    console.error('❌ Error saat menghapus file:', err.message);
+    res.status(500).json({ error: 'Gagal menghapus file' });
+  }
+}
+
 module.exports = {
   handleUploadStream,
   handleDirectUpload,
-  getUploadedFilesList
+  getUploadedFilesList,
+  handleUpdateFile,
+  handleDeleteFile
 };

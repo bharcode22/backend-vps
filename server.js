@@ -23,9 +23,14 @@ app.use(cors({
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Serve static uploaded files (Fallback untuk dev mode tanpa Nginx)
+// Serve static uploaded files with Content-Disposition attachment (Direct Download)
 const uploadDir = process.env.UPLOAD_DIR || 'uploads';
-app.use('/uploads', express.static(path.resolve(uploadDir)));
+app.use('/uploads', express.static(path.resolve(uploadDir), {
+  setHeaders: (res, filePath) => {
+    const filename = path.basename(filePath);
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+  }
+}));
 
 // Lacak request log sederhana
 app.use((req, res, next) => {
