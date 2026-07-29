@@ -2,6 +2,7 @@ require('dotenv').config();
 const express = require('express');
 const http = require('http');
 const cors = require('cors');
+const path = require('path');
 const db = require('./db');
 const socketModule = require('./socket');
 const apiRoutes = require('./routes');
@@ -17,10 +18,14 @@ const PORT = process.env.PORT || 3000;
 app.use(cors({
   origin: '*', // Sesuaikan di production
   methods: ['GET', 'POST', 'PUT', 'DELETE'],
-  allowedHeaders: ['Content-Type', 'Authorization']
+  allowedHeaders: ['Content-Type', 'Authorization', 'x-api-key']
 }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+
+// Serve static uploaded files (Fallback untuk dev mode tanpa Nginx)
+const uploadDir = process.env.UPLOAD_DIR || 'uploads';
+app.use('/uploads', express.static(path.resolve(uploadDir)));
 
 // Lacak request log sederhana
 app.use((req, res, next) => {

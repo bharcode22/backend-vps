@@ -93,11 +93,34 @@ const diskStorage = multer.diskStorage({
     cb(null, uploadDir);
   },
   filename: (req, file, cb) => {
-    cb(null, Date.now() + '-' + file.originalname);
+    const ext = path.extname(file.originalname).toLowerCase();
+    const sanitizedBase = path.basename(file.originalname, ext)
+      .replace(/[^a-zA-Z0-9_-]/g, '_')
+      .slice(0, 50);
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+    cb(null, `${sanitizedBase}-${uniqueSuffix}${ext}`);
   }
 });
 
-const uploadToDisk = multer({ storage: diskStorage });
+// Allowed file types filter
+const fileFilter = (req, file, cb) => {
+  const allowedExtensions = /jpeg|jpg|png|gif|webp|pdf|docx|xlsx|txt|zip/;
+  const ext = path.extname(file.originalname).toLowerCase().replace('.', '');
+
+  if (allowedExtensions.test(ext)) {
+    cb(null, true);
+  } else {
+    cb(new Error(`Tipe file .${ext} tidak diizinkan untuk di-upload.`));
+  }
+};
+
+const uploadToDisk = multer({
+  storage: diskStorage,
+  limits: {
+    fileSize: 25 * 1024 * 1024 // Max 25MB
+  },
+  fileFilter: fileFilter
+});
 
 module.exports = {
   upload,

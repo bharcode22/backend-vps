@@ -106,6 +106,10 @@ function handleDirectUpload(req, res) {
     return res.status(400).json({ error: 'Tidak ada file yang diunggah' });
   }
 
+  const host = req.get('host');
+  const protocol = req.protocol;
+  const downloadUrl = `${protocol}://${host}/uploads/${req.file.filename}`;
+
   console.log(`📥 File sukses disimpan di VPS: ${req.file.path}`);
   res.json({
     status: 'success',
@@ -114,7 +118,9 @@ function handleDirectUpload(req, res) {
       originalName: req.file.originalname,
       filename: req.file.filename,
       size: req.file.size,
-      path: req.file.path
+      mimetype: req.file.mimetype,
+      path: req.file.path,
+      downloadUrl: downloadUrl
     }
   });
 }
