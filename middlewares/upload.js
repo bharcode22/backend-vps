@@ -83,14 +83,14 @@ const streamStorage = {
 
 const upload = multer({ storage: streamStorage });
 
-// Direct file upload to VPS
+// Direct file upload to VPS (Khusus fitur upload file baru)
 const diskStorage = multer.diskStorage({
   destination: (req, file, cb) => {
-    const uploadDir = process.env.UPLOAD_DIR || './uploads';
-    if (!fs.existsSync(uploadDir)) {
-      fs.mkdirSync(uploadDir, { recursive: true });
+    const directUploadDir = process.env.DIRECT_UPLOAD_DIR || './upload-file';
+    if (!fs.existsSync(directUploadDir)) {
+      fs.mkdirSync(directUploadDir, { recursive: true });
     }
-    cb(null, uploadDir);
+    cb(null, directUploadDir);
   },
   filename: (req, file, cb) => {
     const ext = path.extname(file.originalname).toLowerCase();

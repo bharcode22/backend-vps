@@ -59,7 +59,7 @@ function handleUploadStream(req, res) {
 
       req.on('error', (err) => {
         console.error(`❌ (Raw) Gagal menyimpan ke disk VPS:`, err.message);
-        fs.unlink(targetDiskPath, () => {});
+        fs.unlink(targetDiskPath, () => { });
         pendingDownloads.delete(downloadSessionId);
         res.status(500).json({ error: 'Stream interrupted' });
         if (browserRes) {
@@ -109,9 +109,9 @@ async function handleDirectUpload(req, res) {
 
   const host = req.get('host');
   const protocol = req.protocol;
-  const downloadUrl = `${protocol}://${host}/uploads/${req.file.filename}`;
+  const downloadUrl = `${protocol}://${host}/upload-file/${req.file.filename}`;
 
-  console.log(`📥 File sukses disimpan di VPS: ${req.file.path}`);
+  console.log(`📥 File sukses disimpan di VPS (folder upload-file): ${req.file.path}`);
 
   const fileData = {
     originalName: req.file.originalname,

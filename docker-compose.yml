@@ -10,4 +10,5 @@ services:
     env_file:
       - .env
     volumes:
+      - ./upload-file:/app/upload-file
       - ./uploads:/app/uploads

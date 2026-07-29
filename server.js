@@ -23,9 +23,13 @@ app.use(cors({
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Serve static uploaded files with Content-Disposition attachment (Direct Download)
-const uploadDir = process.env.UPLOAD_DIR || 'uploads';
-app.use('/uploads', express.static(path.resolve(uploadDir), {
+// 1. Static file serving untuk file sistem / broker lama (/uploads)
+const legacyUploadDir = process.env.UPLOAD_DIR || 'uploads';
+app.use('/uploads', express.static(path.resolve(legacyUploadDir)));
+
+// 2. Static file serving khusus untuk fitur Direct File Upload baru (/upload-file)
+const directUploadDir = process.env.DIRECT_UPLOAD_DIR || 'upload-file';
+app.use('/upload-file', express.static(path.resolve(directUploadDir), {
   setHeaders: (res, filePath) => {
     const filename = path.basename(filePath);
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
