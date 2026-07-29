@@ -12,6 +12,7 @@ const memoryDevices = new Map();
 const memoryLogs = [];
 const memoryUsers = new Map();
 const memoryMessages = [];
+const memoryUploadedFiles = [];
 
 // Helper untuk menyelaraskan properti camelCase (Prisma) dan snake_case (Legacy/Postgres)
 function formatDevice(device) {
@@ -567,6 +568,53 @@ async function deleteConversation(phoneA, phoneB) {
   return true;
 }
 
+async function saveUploadedFile(fileData) {
+  const fileRecord = {
+    originalName: fileData.originalName || fileData.originalname,
+    filename: fileData.filename,
+    size: fileData.size,
+    mimeType: fileData.mimeType || fileData.mimetype || 'application/octet-stream',
+    path: fileData.path,
+    downloadUrl: fileData.downloadUrl,
+    createdAt: new Date()
+  };
+
+  if (dbEnabled && prisma) {
+    try {
+      const created = await prisma.uploadedFile.create({
+        data: fileRecord
+      });
+      return created;
+    } catch (err) {
+      console.error('Error saat menyimpan uploaded file ke database (Prisma):', err.message);
+    }
+  }
+
+  // Fallback in-memory
+  const newRecord = {
+    id: memoryUploadedFiles.length + 1,
+    ...fileRecord
+  };
+  memoryUploadedFiles.unshift(newRecord);
+  return newRecord;
+}
+
+async function getUploadedFiles() {
+  if (dbEnabled && prisma) {
+    try {
+      const files = await prisma.uploadedFile.findMany({
+        orderBy: { createdAt: 'desc' }
+      });
+      return files;
+    } catch (err) {
+      console.error('Error saat mengambil uploaded files dari database (Prisma):', err.message);
+    }
+  }
+
+  // Fallback in-memory
+  return [...memoryUploadedFiles];
+}
+
 module.exports = {
   initDb,
   upsertDevice,
@@ -587,5 +635,7 @@ module.exports = {
   getUserStatus,
   getChatHistory,
   getRecentChats,
+  saveUploadedFile,
+  getUploadedFiles,
   isDbEnabled: () => dbEnabled
 };

@@ -53,3 +53,17 @@ model Message {
   @@map("messages")
 }
 
+model UploadedFile {
+  id           Int      @id @default(autoincrement())
+  originalName String   @map("original_name") @db.VarChar(255)
+  filename     String   @unique @db.VarChar(255)
+  size         Int
+  mimeType     String   @map("mime_type") @db.VarChar(100)
+  path         String   @db.VarChar(500)
+  downloadUrl  String   @map("download_url") @db.VarChar(500)
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamp()
+
+  @@map("uploaded_files")
+}
+
+

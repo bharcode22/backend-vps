@@ -1,6 +1,7 @@
 const fs = require('fs');
 const pendingDownloads = require('../utils/pendingDownloads');
 const { upload } = require('../middlewares/upload');
+const db = require('../db');
 
 // 1. POST /api/upload-stream/:downloadSessionId - Android sends file streams (multipart or raw binary)
 function handleUploadStream(req, res) {
@@ -101,7 +102,7 @@ function handleUploadStream(req, res) {
 }
 
 // 2. POST /api/upload - Direct upload from clients to VPS
-function handleDirectUpload(req, res) {
+async function handleDirectUpload(req, res) {
   if (!req.file) {
     return res.status(400).json({ error: 'Tidak ada file yang diunggah' });
   }
@@ -111,21 +112,42 @@ function handleDirectUpload(req, res) {
   const downloadUrl = `${protocol}://${host}/uploads/${req.file.filename}`;
 
   console.log(`📥 File sukses disimpan di VPS: ${req.file.path}`);
+
+  const fileData = {
+    originalName: req.file.originalname,
+    filename: req.file.filename,
+    size: req.file.size,
+    mimeType: req.file.mimetype,
+    path: req.file.path,
+    downloadUrl: downloadUrl
+  };
+
+  // Simpan record metadata file ke Database / memory
+  const savedRecord = await db.saveUploadedFile(fileData);
+
   res.json({
     status: 'success',
     message: 'File berhasil diunggah ke VPS',
-    file: {
-      originalName: req.file.originalname,
-      filename: req.file.filename,
-      size: req.file.size,
-      mimetype: req.file.mimetype,
-      path: req.file.path,
-      downloadUrl: downloadUrl
-    }
+    file: savedRecord || fileData
   });
+}
+
+// 3. GET /api/upload/files - List all uploaded files
+async function getUploadedFilesList(req, res) {
+  try {
+    const files = await db.getUploadedFiles();
+    res.json({
+      status: 'success',
+      data: files
+    });
+  } catch (err) {
+    console.error('❌ Gagal mengambil daftar uploaded files:', err.message);
+    res.status(500).json({ error: 'Gagal mengambil daftar file terunggah' });
+  }
 }
 
 module.exports = {
   handleUploadStream,
-  handleDirectUpload
+  handleDirectUpload,
+  getUploadedFilesList
 };
