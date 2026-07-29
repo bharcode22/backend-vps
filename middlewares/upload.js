@@ -117,7 +117,7 @@ const fileFilter = (req, file, cb) => {
 const uploadToDisk = multer({
   storage: diskStorage,
   limits: {
-    fileSize: 25 * 1024 * 1024 // Max 25MB
+    fileSize: 200 * 1024 * 1024 // Max 200MB
   },
   fileFilter: fileFilter
 });
