@@ -102,16 +102,10 @@ const diskStorage = multer.diskStorage({
   }
 });
 
-// Allowed file types filter
+// Allow all file types filter
 const fileFilter = (req, file, cb) => {
-  const allowedExtensions = /jpeg|jpg|png|gif|webp|pdf|docx|xlsx|txt|zip/;
-  const ext = path.extname(file.originalname).toLowerCase().replace('.', '');
-
-  if (allowedExtensions.test(ext)) {
-    cb(null, true);
-  } else {
-    cb(new Error(`Tipe file .${ext} tidak diizinkan untuk di-upload.`));
-  }
+  // Izinkan semua tipe file
+  cb(null, true);
 };
 
 const uploadToDisk = multer({
