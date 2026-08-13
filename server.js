@@ -42,15 +42,18 @@ app.use((req, res, next) => {
   next();
 });
 
-// Root endpoint untuk health check
-app.get('/', (req, res) => {
+// Root & API endpoint untuk health check
+const healthCheckHandler = (req, res) => {
   res.json({
     status: 'online',
     service: 'VPS File Broker Service',
     dbConnected: db.isDbEnabled(),
     activeDevicesCount: socketModule.getActiveDevicesList().length
   });
-});
+};
+
+app.get('/', healthCheckHandler);
+app.get('/api/health', healthCheckHandler);
 
 // Daftarkan route API
 app.use('/api', apiRoutes);
