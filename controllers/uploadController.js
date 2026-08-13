@@ -107,8 +107,8 @@ async function handleDirectUpload(req, res) {
     return res.status(400).json({ error: 'Tidak ada file yang diunggah' });
   }
 
-  const host = req.get('host');
-  const protocol = req.protocol;
+  const host = req.get('x-forwarded-host') || req.get('host');
+  const protocol = req.headers['x-forwarded-proto'] || req.protocol;
   const downloadUrl = `${protocol}://${host}/upload-file/${req.file.filename}`;
 
   console.log(`📥 File sukses disimpan di VPS (folder upload-file): ${req.file.path}`);
@@ -136,9 +136,21 @@ async function handleDirectUpload(req, res) {
 async function getUploadedFilesList(req, res) {
   try {
     const files = await db.getUploadedFiles();
+    const reqProtocol = req.headers['x-forwarded-proto'] || req.protocol;
+
+    const formattedFiles = files.map(file => {
+      let downloadUrl = file.downloadUrl;
+      if (downloadUrl && (reqProtocol === 'https' || req.secure)) {
+        if (downloadUrl.startsWith('http://')) {
+          downloadUrl = downloadUrl.replace(/^http:\/\//, 'https://');
+        }
+      }
+      return { ...file, downloadUrl };
+    });
+
     res.json({
       status: 'success',
-      data: files
+      data: formattedFiles
     });
   } catch (err) {
     console.error('❌ Gagal mengambil daftar uploaded files:', err.message);

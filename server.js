@@ -9,6 +9,7 @@ const apiRoutes = require('./routes');
 const rabbitmq = require('./utils/rabbitmq');
 
 const app = express();
+app.set('trust proxy', true);
 const server = http.createServer(app);
 
 // Port server
