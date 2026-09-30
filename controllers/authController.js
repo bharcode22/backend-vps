@@ -2,11 +2,18 @@ const jwt = require('jsonwebtoken');
 const { OAuth2Client } = require('google-auth-library');
 
 const JWT_SECRET = process.env.JWT_SECRET || 'kasir-vps-secure-jwt-key-2026';
-const ALLOWED_EMAIL = (process.env.ALLOWED_GOOGLE_EMAIL || 'zaqqwer758@gmail.com').toLowerCase().trim();
+function getAllowedEmails() {
+  const envEmails = process.env.ALLOWED_GOOGLE_EMAIL || 'zaqqwer758@gmail.com';
+  return envEmails
+    .toLowerCase()
+    .split(',')
+    .map(e => e.trim())
+    .filter(Boolean);
+}
 
 /**
  * POST /api/auth/google
- * Login menggunakan Google OAuth dengan Whitelist Email Tunggal (zaqqwer758@gmail.com)
+ * Login menggunakan Google OAuth dengan Whitelist Email Administrator
  */
 async function googleLogin(req, res) {
   const { credential } = req.body;
@@ -18,7 +25,7 @@ async function googleLogin(req, res) {
   try {
     const googleClientId = process.env.GOOGLE_CLIENT_ID;
     const client = new OAuth2Client(googleClientId);
-    
+
     // Verifikasi ID Token langsung ke server Google
     const ticket = await client.verifyIdToken({
       idToken: credential,
@@ -31,10 +38,11 @@ async function googleLogin(req, res) {
     }
 
     const userEmail = payload.email.toLowerCase().trim();
+    const allowedEmails = getAllowedEmails();
 
-    // STRICT WHITELIST CHECK: Hanya zaqqwer758@gmail.com yang diperbolehkan!
-    if (userEmail !== ALLOWED_EMAIL) {
-      console.warn(`⚠️ [AUTH DENIED] Email ${userEmail} mencoba login tetapi ditolak.`);
+    // STRICT WHITELIST CHECK: Cek apakah email ada di daftar whitelist
+    if (!allowedEmails.includes(userEmail)) {
+      console.warn(`⚠️ [AUTH DENIED] Email ${userEmail} mencoba login tetapi tidak terdaftar di whitelist: [${allowedEmails.join(', ')}]`);
       return res.status(403).json({
         error: `Akses ditolak. Email (${userEmail}) tidak memiliki izin administrator.`
       });

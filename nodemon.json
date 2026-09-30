@@ -1,0 +1,20 @@
+{
+  "watch": [
+    "controllers",
+    "middlewares",
+    "routes",
+    "utils",
+    "db.js",
+    "server.js",
+    "socket.js"
+  ],
+  "ignore": [
+    "uploads/**",
+    "upload-file/**",
+    "*.json",
+    "*.log",
+    "dist/**",
+    "node_modules/**"
+  ],
+  "ext": "js"
+}

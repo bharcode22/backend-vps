@@ -59,6 +59,23 @@ app.get('/api/health', healthCheckHandler);
 // Daftarkan route API
 app.use('/api', apiRoutes);
 
+// Global Express error handler
+app.use((err, req, res, next) => {
+  console.error(`💥 Express Error pada ${req.method} ${req.url}:`, err);
+  if (!res.headersSent) {
+    res.status(500).json({ error: 'Internal Server Error', message: err.message, stack: process.env.NODE_ENV === 'development' ? err.stack : undefined });
+  }
+});
+
+// Tangani uncaught exceptions & rejections agar server tidak crash tiba-tiba
+process.on('uncaughtException', (err) => {
+  console.error('💥 Uncaught Exception:', err);
+});
+
+process.on('unhandledRejection', (reason) => {
+  console.error('💥 Unhandled Rejection:', reason);
+});
+
 // Jalankan Server & Inisialisasi Database
 async function startServer() {
   // Inisialisasi koneksi PostgreSQL (dengan in-memory fallback otomatis jika gagal)

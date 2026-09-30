@@ -34,6 +34,15 @@ async function getDeviceFiles(req, res) {
     console.log(`🔍 Meminta daftar file folder "${folder}" dari device ${deviceId}${date ? ` (Filter Tgl: ${date})` : ''}`);
     let files = await socketModule.sendDeviceCommand(deviceId, 'LIST_FILES', { folder, date }, 60000);
 
+    if (files && files.error) {
+      console.warn(`⚠️ Perangkat ${deviceId} melaporkan status error: ${files.error}`);
+      return res.status(400).json({ error: files.error, files: [] });
+    }
+
+    if (!Array.isArray(files)) {
+      files = [];
+    }
+
     // Urutkan file berdasarkan mtime (modified time) secara descending (terbaru paling atas)
     if (Array.isArray(files)) {
       // Simpan respon ke VPS local storage dalam bentuk JSON (cukup all.json saja)
