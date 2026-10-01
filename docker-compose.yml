@@ -3,7 +3,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: kasir-backend
+    container_name: monitoring
     restart: always
     ports:
       - "3001:3001"
