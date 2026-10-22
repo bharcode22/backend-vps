@@ -5,9 +5,10 @@ const JWT_SECRET = process.env.JWT_SECRET || 'kasir-vps-secure-jwt-key-2026';
 function getAllowedEmails() {
   const envEmails = process.env.ALLOWED_GOOGLE_EMAIL || 'zaqqwer758@gmail.com';
   return envEmails
+    .replace(/^["']|["']$/g, '')
     .toLowerCase()
     .split(',')
-    .map(e => e.trim())
+    .map(e => e.trim().replace(/^["']|["']$/g, ''))
     .filter(Boolean);
 }
 
@@ -23,13 +24,35 @@ async function googleLogin(req, res) {
   }
 
   try {
-    const googleClientId = process.env.GOOGLE_CLIENT_ID;
-    const client = new OAuth2Client(googleClientId);
+    const envClientId = (process.env.GOOGLE_CLIENT_ID || '').replace(/^["']|["']$/g, '');
+    const validAudiences = [];
 
-    // Verifikasi ID Token langsung ke server Google
+    if (envClientId) {
+      envClientId.split(',').forEach(id => {
+        const clean = id.trim();
+        if (clean && clean !== 'YOUR_GOOGLE_CLIENT_ID.apps.googleusercontent.com') {
+          validAudiences.push(clean);
+        }
+      });
+    }
+
+    // Pastikan kedua client ID yang terdaftar di proyek diterima oleh backend
+    const knownClientIds = [
+      '119948676960-vmvbg7ctvp297nr4s135quq3ia0igv72.apps.googleusercontent.com',
+      '1084639382013-5bsvjs217aqckp9r8o6fjd2ru4r46e4b.apps.googleusercontent.com'
+    ];
+    for (const id of knownClientIds) {
+      if (!validAudiences.includes(id)) {
+        validAudiences.push(id);
+      }
+    }
+
+    const client = new OAuth2Client();
+
+    // Verifikasi ID Token langsung ke server Google dengan daftar audience yang valid
     const ticket = await client.verifyIdToken({
       idToken: credential,
-      audience: googleClientId && googleClientId !== 'YOUR_GOOGLE_CLIENT_ID.apps.googleusercontent.com' ? googleClientId : undefined,
+      audience: validAudiences.length === 1 ? validAudiences[0] : validAudiences,
     });
 
     const payload = ticket.getPayload();
@@ -70,7 +93,7 @@ async function googleLogin(req, res) {
     });
   } catch (err) {
     console.error('❌ Gagal memverifikasi Google token:', err.message);
-    res.status(401).json({ error: 'Verifikasi login Google gagal.', details: err.message });
+    res.status(401).json({ error: `Verifikasi login Google gagal: ${err.message}` });
   }
 }
 

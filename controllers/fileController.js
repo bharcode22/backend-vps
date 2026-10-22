@@ -499,7 +499,7 @@ async function getJsonContent(req, res) {
 
 // 7. GET /api/vps/files - Menampilkan daftar berkas fisik terkompresi yang tersimpan di VPS
 async function getVpsFiles(req, res) {
-  const folder = req.query.folder || 'DCIM/Camera';
+  const folderParam = req.query.folder;
   const { deviceId } = req.query;
 
   let activeDeviceId = deviceId;
@@ -519,36 +519,60 @@ async function getVpsFiles(req, res) {
     } catch (e) { }
   }
 
-  if (!activeDeviceId) {
-    return res.status(400).json({ error: 'Device ID tidak ditemukan.' });
-  }
-
   const uploadDir = process.env.UPLOAD_DIR || './uploads';
-  const targetDir = path.join(uploadDir, `${activeDeviceId}-${folder}`);
 
-  if (!fs.existsSync(targetDir)) {
+  if (!fs.existsSync(uploadDir)) {
     return res.json([]);
   }
 
   try {
     const list = [];
-    const items = fs.readdirSync(targetDir);
-    for (const item of items) {
-      const itemPath = path.join(targetDir, item);
-      const stat = fs.statSync(itemPath);
-      if (stat.isDirectory()) {
-        const files = fs.readdirSync(itemPath);
-        for (const filename of files) {
-          const filePath = path.join(itemPath, filename);
-          const fileStat = fs.statSync(filePath);
-          if (fileStat.isFile()) {
-            list.push({
-              name: filename,
-              date: item, // e.g. "2026-01-26"
-              size: fileStat.size,
-              mtime: fileStat.mtime,
-              relativePath: `${item}/${filename}`
-            });
+    const targetDirs = [];
+
+    if (folderParam && folderParam !== 'all') {
+      targetDirs.push({
+        folder: folderParam,
+        dirPath: path.join(uploadDir, `${activeDeviceId}-${folderParam}`)
+      });
+    } else {
+      // Scan semua folder di uploadDir
+      const allDirs = fs.readdirSync(uploadDir);
+      for (const d of allDirs) {
+        const fullDirPath = path.join(uploadDir, d);
+        if (fs.statSync(fullDirPath).isDirectory()) {
+          let folderName = d;
+          if (activeDeviceId && d.startsWith(`${activeDeviceId}-`)) {
+            folderName = d.substring(`${activeDeviceId}-`.length);
+            targetDirs.push({ folder: folderName, dirPath: fullDirPath });
+          } else if (!activeDeviceId) {
+            targetDirs.push({ folder: folderName, dirPath: fullDirPath });
+          }
+        }
+      }
+    }
+
+    for (const { folder, dirPath } of targetDirs) {
+      if (!fs.existsSync(dirPath)) continue;
+      const dateItems = fs.readdirSync(dirPath);
+      for (const item of dateItems) {
+        const itemPath = path.join(dirPath, item);
+        const stat = fs.statSync(itemPath);
+        if (stat.isDirectory()) {
+          const files = fs.readdirSync(itemPath);
+          for (const filename of files) {
+            const filePath = path.join(itemPath, filename);
+            const fileStat = fs.statSync(filePath);
+            if (fileStat.isFile()) {
+              list.push({
+                name: filename,
+                date: item, // e.g. "2026-01-26"
+                folder: folder,
+                deviceId: activeDeviceId,
+                size: fileStat.size,
+                mtime: fileStat.mtime,
+                relativePath: `${item}/${filename}`
+              });
+            }
           }
         }
       }
