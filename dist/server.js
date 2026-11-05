@@ -2004,6 +2004,37 @@ var require_fileController = __commonJS({
         res.status(500).json({ error: "Gagal membaca berkas JSON cache.", details: err.message });
       }
     }
+    function extractFileTimestamp(file) {
+      if (!file) return 0;
+      const name = file.name || file.fileName || file.originalName || file.filename || "";
+      const matchDateTime = name.match(/(?:Screenshot|IMG|VID)[_-](\d{4})(\d{2})(\d{2})[_-](\d{2})(\d{2})(\d{2})/i);
+      if (matchDateTime) {
+        const [_, y, m, d, h, min, s] = matchDateTime;
+        const time = (/* @__PURE__ */ new Date(`${y}-${m}-${d}T${h}:${min}:${s}`)).getTime();
+        if (!isNaN(time) && time > 0) return time;
+      }
+      const matchDateNum = name.match(/(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})(\d{2})/);
+      if (matchDateNum) {
+        const [_, y, m, d, h, min, s] = matchDateNum;
+        const time = (/* @__PURE__ */ new Date(`${y}-${m}-${d}T${h}:${min}:${s}`)).getTime();
+        if (!isNaN(time) && time > 0) return time;
+      }
+      const matchEpoch = name.match(/(?:^|[_-])(1[6-9]\d{11})(?:[._-]|$)/);
+      if (matchEpoch) {
+        const epoch = parseInt(matchEpoch[1], 10);
+        if (!isNaN(epoch) && epoch > 0) return epoch;
+      }
+      if (file.date && file.date !== "no-date" && file.date !== "null") {
+        const d = new Date(file.date).getTime();
+        if (!isNaN(d) && d > 0) return d;
+      }
+      const mtime = file.mtime || file.fileMtime || file.createdAt;
+      if (mtime) {
+        const d = new Date(mtime).getTime();
+        if (!isNaN(d) && d > 0) return d;
+      }
+      return 0;
+    }
     async function getVpsFiles(req, res) {
       let folderParam = req.query.folder || "";
       const { deviceId } = req.query;
@@ -2121,7 +2152,7 @@ var require_fileController = __commonJS({
             const baseFolder = d.substring(`${activeDeviceId}-`.length);
             scanDeepFiles2(fullDirPath, "");
           }
-          list.sort((a, b) => new Date(b.mtime) - new Date(a.mtime));
+          list.sort((a, b) => extractFileTimestamp(b) - extractFileTimestamp(a));
           return res.json(list);
         }
         const normFolder = folderParam.replace(/^[/\\]+/, "").replace(/[/\\]+$/, "");
@@ -2193,7 +2224,10 @@ var require_fileController = __commonJS({
         list.sort((a, b) => {
           if (a.isDirectory && !b.isDirectory) return -1;
           if (!a.isDirectory && b.isDirectory) return 1;
-          return new Date(b.mtime) - new Date(a.mtime);
+          if (a.isDirectory && b.isDirectory) {
+            return (a.name || "").localeCompare(b.name || "");
+          }
+          return extractFileTimestamp(b) - extractFileTimestamp(a);
         });
         res.json(list);
       } catch (err) {

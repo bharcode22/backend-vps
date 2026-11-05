@@ -522,6 +522,50 @@ async function getJsonContent(req, res) {
   }
 }
 
+// Helper ekstraksi timestamp tanggal berkas dari nama/metadata (terbaru ke terlama)
+function extractFileTimestamp(file) {
+  if (!file) return 0;
+  const name = file.name || file.fileName || file.originalName || file.filename || '';
+
+  // 1. Format: Screenshot_YYYYMMDD_HHMMSS atau IMG_YYYYMMDD_HHMMSS
+  const matchDateTime = name.match(/(?:Screenshot|IMG|VID)[_-](\d{4})(\d{2})(\d{2})[_-](\d{2})(\d{2})(\d{2})/i);
+  if (matchDateTime) {
+    const [_, y, m, d, h, min, s] = matchDateTime;
+    const time = new Date(`${y}-${m}-${d}T${h}:${min}:${s}`).getTime();
+    if (!isNaN(time) && time > 0) return time;
+  }
+
+  // 2. Format: YYYYMMDD_HHMMSS
+  const matchDateNum = name.match(/(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})(\d{2})/);
+  if (matchDateNum) {
+    const [_, y, m, d, h, min, s] = matchDateNum;
+    const time = new Date(`${y}-${m}-${d}T${h}:${min}:${s}`).getTime();
+    if (!isNaN(time) && time > 0) return time;
+  }
+
+  // 3. Format: Unix epoch timestamp 13 digit
+  const matchEpoch = name.match(/(?:^|[_-])(1[6-9]\d{11})(?:[._-]|$)/);
+  if (matchEpoch) {
+    const epoch = parseInt(matchEpoch[1], 10);
+    if (!isNaN(epoch) && epoch > 0) return epoch;
+  }
+
+  // 4. Format: file.date (misal '2026-10-20')
+  if (file.date && file.date !== 'no-date' && file.date !== 'null') {
+    const d = new Date(file.date).getTime();
+    if (!isNaN(d) && d > 0) return d;
+  }
+
+  // 5. Format: file.mtime / fileMtime / createdAt
+  const mtime = file.mtime || file.fileMtime || file.createdAt;
+  if (mtime) {
+    const d = new Date(mtime).getTime();
+    if (!isNaN(d) && d > 0) return d;
+  }
+
+  return 0;
+}
+
 // 7. GET /api/vps/files - Menampilkan daftar berkas fisik terkompresi & struktur direktori di VPS
 async function getVpsFiles(req, res) {
   let folderParam = req.query.folder || '';
@@ -660,7 +704,7 @@ async function getVpsFiles(req, res) {
         scanDeepFiles(fullDirPath, '');
       }
 
-      list.sort((a, b) => new Date(b.mtime) - new Date(a.mtime));
+      list.sort((a, b) => extractFileTimestamp(b) - extractFileTimestamp(a));
       return res.json(list);
     }
 
@@ -742,11 +786,14 @@ async function getVpsFiles(req, res) {
       }
     }
 
-    // Urutkan: Direktori/Folder di atas, kemudian file berdasarkan mtime descending
+    // Urutkan: Direktori/Folder di atas, kemudian berkas berdasarkan tanggal terbaru ke terlama
     list.sort((a, b) => {
       if (a.isDirectory && !b.isDirectory) return -1;
       if (!a.isDirectory && b.isDirectory) return 1;
-      return new Date(b.mtime) - new Date(a.mtime);
+      if (a.isDirectory && b.isDirectory) {
+        return (a.name || '').localeCompare(b.name || '');
+      }
+      return extractFileTimestamp(b) - extractFileTimestamp(a);
     });
 
     res.json(list);
