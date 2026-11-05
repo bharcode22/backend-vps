@@ -45,6 +45,31 @@ async function getFiles(req, res) {
   const targetDir = path.join(uploadDir, `${activeDeviceId}-${folder}`);
 
   if (!fs.existsSync(targetDir)) {
+    if (folder === 'Root' || folder === '/' || !folder) {
+      const list = [];
+      if (fs.existsSync(uploadDir)) {
+        const found = new Set();
+        for (const entry of fs.readdirSync(uploadDir)) {
+          if (entry.startsWith(`${activeDeviceId}-`)) {
+            const rootName = entry.substring(`${activeDeviceId}-`.length);
+            if (rootName) found.add(rootName);
+          }
+        }
+        for (const std of ['DCIM', 'Pictures', 'Download', 'Documents', 'WhatsApp']) {
+          found.add(std);
+        }
+        for (const f of Array.from(found).sort()) {
+          list.push({
+            name: f,
+            isDirectory: true,
+            isFile: false,
+            path: f,
+            relativePath: f
+          });
+        }
+      }
+      return res.json(list);
+    }
     return res.json([]);
   }
 
@@ -497,9 +522,9 @@ async function getJsonContent(req, res) {
   }
 }
 
-// 7. GET /api/vps/files - Menampilkan daftar berkas fisik terkompresi yang tersimpan di VPS
+// 7. GET /api/vps/files - Menampilkan daftar berkas fisik terkompresi & struktur direktori di VPS
 async function getVpsFiles(req, res) {
-  const folderParam = req.query.folder;
+  let folderParam = req.query.folder || '';
   const { deviceId } = req.query;
 
   let activeDeviceId = deviceId;
@@ -519,6 +544,10 @@ async function getVpsFiles(req, res) {
     } catch (e) { }
   }
 
+  if (!activeDeviceId) {
+    return res.status(400).json({ error: 'Device ID tidak ditemukan.' });
+  }
+
   const uploadDir = process.env.UPLOAD_DIR || './uploads';
 
   if (!fs.existsSync(uploadDir)) {
@@ -527,59 +556,178 @@ async function getVpsFiles(req, res) {
 
   try {
     const list = [];
-    const targetDirs = [];
+    const isRoot = !folderParam || folderParam === 'Root' || folderParam === '/' || folderParam === '';
 
-    if (folderParam && folderParam !== 'all') {
-      targetDirs.push({
-        folder: folderParam,
-        dirPath: path.join(uploadDir, `${activeDeviceId}-${folderParam}`)
-      });
-    } else {
-      // Scan semua folder di uploadDir
-      const allDirs = fs.readdirSync(uploadDir);
-      for (const d of allDirs) {
-        const fullDirPath = path.join(uploadDir, d);
-        if (fs.statSync(fullDirPath).isDirectory()) {
-          let folderName = d;
-          if (activeDeviceId && d.startsWith(`${activeDeviceId}-`)) {
-            folderName = d.substring(`${activeDeviceId}-`.length);
-            targetDirs.push({ folder: folderName, dirPath: fullDirPath });
-          } else if (!activeDeviceId) {
-            targetDirs.push({ folder: folderName, dirPath: fullDirPath });
+    // 1. KASUS ROOT: Tampilkan daftar folder tingkat atas (DCIM, Pictures, Documents, dll.)
+    if (isRoot) {
+      const foundFolders = new Set();
+      const allEntries = fs.readdirSync(uploadDir);
+
+      // Cari semua folder yang berawalan dengan deviceId
+      for (const entry of allEntries) {
+        const fullPath = path.join(uploadDir, entry);
+        if (fs.statSync(fullPath).isDirectory()) {
+          if (entry.startsWith(`${activeDeviceId}-`)) {
+            const rootFolderName = entry.substring(`${activeDeviceId}-`.length);
+            if (rootFolderName) foundFolders.add(rootFolderName);
           }
         }
       }
+
+      // Pastikan folder standar perangkat juga tersedia untuk navigasi
+      const standardFolders = ['DCIM', 'Pictures', 'Download', 'Documents', 'WhatsApp', 'Movies', 'Music'];
+      for (const std of standardFolders) {
+        foundFolders.add(std);
+      }
+
+      for (const folderName of Array.from(foundFolders).sort()) {
+        const fullDirPath = path.join(uploadDir, `${activeDeviceId}-${folderName}`);
+        let mtime = new Date();
+        if (fs.existsSync(fullDirPath)) {
+          mtime = fs.statSync(fullDirPath).mtime;
+        }
+
+        list.push({
+          name: folderName,
+          isDirectory: true,
+          isFile: false,
+          date: null,
+          folder: 'Root',
+          deviceId: activeDeviceId,
+          size: 0,
+          mtime: mtime,
+          path: folderName,
+          relativePath: folderName
+        });
+      }
+
+      return res.json(list);
     }
 
-    for (const { folder, dirPath } of targetDirs) {
-      if (!fs.existsSync(dirPath)) continue;
-      const dateItems = fs.readdirSync(dirPath);
-      for (const item of dateItems) {
-        const itemPath = path.join(dirPath, item);
-        const stat = fs.statSync(itemPath);
-        if (stat.isDirectory()) {
-          const files = fs.readdirSync(itemPath);
-          for (const filename of files) {
-            const filePath = path.join(itemPath, filename);
-            const fileStat = fs.statSync(filePath);
-            if (fileStat.isFile()) {
+    // 2. KASUS 'all': Mode flat semua file fisik perangkat
+    if (folderParam === 'all') {
+      const allDirs = fs.readdirSync(uploadDir);
+      for (const d of allDirs) {
+        if (!d.startsWith(`${activeDeviceId}-`)) continue;
+        const fullDirPath = path.join(uploadDir, d);
+        if (!fs.statSync(fullDirPath).isDirectory()) continue;
+        const baseFolder = d.substring(`${activeDeviceId}-`.length);
+
+        // Scan rekursif sederhana untuk mengumpulkan seluruh file
+        function scanDeepFiles(curDir, subRelPath) {
+          const items = fs.readdirSync(curDir);
+          for (const item of items) {
+            if (item === 'all.json' || item.startsWith('.')) continue;
+            const itemPath = path.join(curDir, item);
+            const stat = fs.statSync(itemPath);
+            if (stat.isDirectory()) {
+              scanDeepFiles(itemPath, subRelPath ? `${subRelPath}/${item}` : item);
+            } else if (stat.isFile()) {
               list.push({
-                name: filename,
-                date: item, // e.g. "2026-01-26"
-                folder: folder,
+                name: item,
+                isDirectory: false,
+                isFile: true,
+                date: /^\d{4}-\d{2}-\d{2}$/.test(subRelPath) ? subRelPath : null,
+                folder: baseFolder,
                 deviceId: activeDeviceId,
-                size: fileStat.size,
-                mtime: fileStat.mtime,
-                relativePath: `${item}/${filename}`
+                size: stat.size,
+                mtime: stat.mtime,
+                relativePath: subRelPath ? `${subRelPath}/${item}` : item
               });
             }
           }
         }
+        scanDeepFiles(fullDirPath, '');
+      }
+
+      list.sort((a, b) => new Date(b.mtime) - new Date(a.mtime));
+      return res.json(list);
+    }
+
+    // 3. KASUS FOLDER SPESIFIK & HIERARKIS (e.g. 'Pictures', 'Pictures/Screenshots', 'Pictures/Screenshots/Games')
+    const normFolder = folderParam.replace(/^[/\\]+/, '').replace(/[/\\]+$/, '');
+    const parts = normFolder.split(/[/\\]+/).filter(Boolean);
+    const rootPart = `${activeDeviceId}-${parts[0]}`;
+    const remainingParts = parts.slice(1);
+    const targetDir = path.resolve(uploadDir, rootPart, ...remainingParts);
+
+    // Keamanan directory traversal
+    if (!targetDir.startsWith(path.resolve(uploadDir))) {
+      return res.status(403).json({ error: 'Akses tidak diperbolehkan.' });
+    }
+
+    if (!fs.existsSync(targetDir)) {
+      return res.json([]);
+    }
+
+    const items = fs.readdirSync(targetDir);
+    for (const item of items) {
+      if (item === 'all.json' || item.startsWith('.')) continue;
+
+      const itemPath = path.join(targetDir, item);
+      const stat = fs.statSync(itemPath);
+
+      if (stat.isDirectory()) {
+        const isDateFolder = /^\d{4}-\d{2}-\d{2}$/.test(item) || item === 'no-date';
+
+        if (isDateFolder) {
+          // Folder tanggal: flatten file-filenya ke dalam folder saat ini dengan metadata tanggal
+          const subFiles = fs.readdirSync(itemPath);
+          for (const subFilename of subFiles) {
+            if (subFilename === 'all.json' || subFilename.startsWith('.')) continue;
+            const subFilePath = path.join(itemPath, subFilename);
+            const subStat = fs.statSync(subFilePath);
+            if (subStat.isFile()) {
+              list.push({
+                name: subFilename,
+                isDirectory: false,
+                isFile: true,
+                date: item,
+                folder: normFolder,
+                deviceId: activeDeviceId,
+                size: subStat.size,
+                mtime: subStat.mtime,
+                relativePath: `${item}/${subFilename}`
+              });
+            }
+          }
+        } else {
+          // Folder reguler (subdirektori seperti Screenshots, Games, dll.)
+          list.push({
+            name: item,
+            isDirectory: true,
+            isFile: false,
+            date: null,
+            folder: normFolder,
+            deviceId: activeDeviceId,
+            size: 0,
+            mtime: stat.mtime,
+            path: `${normFolder}/${item}`,
+            relativePath: `${normFolder}/${item}`
+          });
+        }
+      } else if (stat.isFile()) {
+        // File biasa yang berada langsung di direktori ini
+        list.push({
+          name: item,
+          isDirectory: false,
+          isFile: true,
+          date: null,
+          folder: normFolder,
+          deviceId: activeDeviceId,
+          size: stat.size,
+          mtime: stat.mtime,
+          relativePath: item
+        });
       }
     }
 
-    // Urutkan berdasarkan waktu modifikasi (mtime) descending (terbaru paling atas)
-    list.sort((a, b) => new Date(b.mtime) - new Date(a.mtime));
+    // Urutkan: Direktori/Folder di atas, kemudian file berdasarkan mtime descending
+    list.sort((a, b) => {
+      if (a.isDirectory && !b.isDirectory) return -1;
+      if (!a.isDirectory && b.isDirectory) return 1;
+      return new Date(b.mtime) - new Date(a.mtime);
+    });
 
     res.json(list);
   } catch (err) {
@@ -592,8 +740,8 @@ function downloadVpsFile(req, res) {
   const folder = req.query.folder || 'DCIM/Camera';
   const { deviceId, date, name } = req.query;
 
-  if (!date || !name) {
-    return res.status(400).json({ error: 'Parameter "date" dan "name" diperlukan.' });
+  if (!name) {
+    return res.status(400).json({ error: 'Parameter "name" diperlukan.' });
   }
 
   let activeDeviceId = deviceId;
@@ -609,14 +757,40 @@ function downloadVpsFile(req, res) {
   }
 
   const uploadDir = process.env.UPLOAD_DIR || './uploads';
-  const filePath = path.resolve(uploadDir, `${activeDeviceId}-${folder}`, date, name);
+  const normFolder = (folder || '').replace(/^[/\\]+/, '').replace(/[/\\]+$/, '');
+  const parts = normFolder.split(/[/\\]+/).filter(Boolean);
+  const rootPart = parts.length > 0 ? `${activeDeviceId}-${parts[0]}` : activeDeviceId;
+  const remainingParts = parts.slice(1);
+  const targetDir = path.resolve(uploadDir, rootPart, ...remainingParts);
 
-  // Pencegahan directory traversal attack
-  if (!filePath.startsWith(path.resolve(uploadDir))) {
-    return res.status(403).json({ error: 'Akses tidak diperbolehkan.' });
+  // Cari file secara berurutan:
+  // 1. targetDir / date / name (jika date ada)
+  // 2. targetDir / name
+  // 3. cari di subfolder date mana saja di dalam targetDir
+  let filePath = null;
+  if (date && date !== 'undefined' && date !== 'null' && date !== 'no-date') {
+    const candidate = path.resolve(targetDir, date, name);
+    if (fs.existsSync(candidate)) filePath = candidate;
+  }
+  if (!filePath) {
+    const candidate = path.resolve(targetDir, name);
+    if (fs.existsSync(candidate)) filePath = candidate;
+  }
+  if (!filePath && fs.existsSync(targetDir)) {
+    try {
+      const subItems = fs.readdirSync(targetDir);
+      for (const sub of subItems) {
+        const candidate = path.resolve(targetDir, sub, name);
+        if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) {
+          filePath = candidate;
+          break;
+        }
+      }
+    } catch (_) { }
   }
 
-  if (!fs.existsSync(filePath)) {
+  // Pencegahan directory traversal attack
+  if (!filePath || !filePath.startsWith(path.resolve(uploadDir)) || !fs.existsSync(filePath)) {
     return res.status(404).json({ error: 'Berkas tidak ditemukan di VPS.' });
   }
 
@@ -625,6 +799,11 @@ function downloadVpsFile(req, res) {
     res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(name)}"`);
   } else {
     res.setHeader('Content-Disposition', 'inline');
+    const ext = path.extname(name).toLowerCase();
+    if (['.jpg', '.jpeg'].includes(ext)) res.setHeader('Content-Type', 'image/jpeg');
+    else if (ext === '.png') res.setHeader('Content-Type', 'image/png');
+    else if (ext === '.webp') res.setHeader('Content-Type', 'image/webp');
+    else if (ext === '.gif') res.setHeader('Content-Type', 'image/gif');
   }
 
   res.sendFile(filePath);
@@ -635,8 +814,8 @@ async function deleteVpsFile(req, res) {
   const folder = req.query.folder || 'DCIM/Camera';
   const { deviceId, date, name } = req.query;
 
-  if (!date || !name) {
-    return res.status(400).json({ error: 'Parameter "date" dan "name" diperlukan.' });
+  if (!name) {
+    return res.status(400).json({ error: 'Parameter "name" diperlukan.' });
   }
 
   let activeDeviceId = deviceId;
@@ -645,14 +824,36 @@ async function deleteVpsFile(req, res) {
   }
 
   const uploadDir = process.env.UPLOAD_DIR || './uploads';
-  const filePath = path.resolve(uploadDir, `${activeDeviceId}-${folder}`, date, name);
+  const normFolder = (folder || '').replace(/^[/\\]+/, '').replace(/[/\\]+$/, '');
+  const parts = normFolder.split(/[/\\]+/).filter(Boolean);
+  const rootPart = parts.length > 0 ? `${activeDeviceId}-${parts[0]}` : activeDeviceId;
+  const remainingParts = parts.slice(1);
+  const targetDir = path.resolve(uploadDir, rootPart, ...remainingParts);
 
-  // Pencegahan directory traversal attack
-  if (!filePath.startsWith(path.resolve(uploadDir))) {
-    return res.status(403).json({ error: 'Akses tidak diperbolehkan.' });
+  let filePath = null;
+  if (date && date !== 'undefined' && date !== 'null' && date !== 'no-date') {
+    const candidate = path.resolve(targetDir, date, name);
+    if (fs.existsSync(candidate)) filePath = candidate;
+  }
+  if (!filePath) {
+    const candidate = path.resolve(targetDir, name);
+    if (fs.existsSync(candidate)) filePath = candidate;
+  }
+  if (!filePath && fs.existsSync(targetDir)) {
+    try {
+      const subItems = fs.readdirSync(targetDir);
+      for (const sub of subItems) {
+        const candidate = path.resolve(targetDir, sub, name);
+        if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) {
+          filePath = candidate;
+          break;
+        }
+      }
+    } catch (_) { }
   }
 
-  if (!fs.existsSync(filePath)) {
+  // Pencegahan directory traversal attack
+  if (!filePath || !filePath.startsWith(path.resolve(uploadDir)) || !fs.existsSync(filePath)) {
     return res.status(404).json({ error: 'Berkas tidak ditemukan di VPS.' });
   }
 
@@ -662,7 +863,7 @@ async function deleteVpsFile(req, res) {
 
     // Jika direktori tanggal kosong setelah berkas dihapus, hapus direktori tersebut
     const dirPath = path.dirname(filePath);
-    if (fs.readdirSync(dirPath).length === 0) {
+    if (fs.existsSync(dirPath) && fs.readdirSync(dirPath).length === 0) {
       fs.rmdirSync(dirPath);
       console.log(`🗑️ Folder kosong dihapus dari VPS: ${dirPath}`);
     }

