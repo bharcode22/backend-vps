@@ -613,7 +613,7 @@ async function getVpsFiles(req, res) {
         if (!fs.statSync(fullDirPath).isDirectory()) continue;
         const baseFolder = d.substring(`${activeDeviceId}-`.length);
 
-        // Scan rekursif sederhana untuk mengumpulkan seluruh file
+        // Scan rekursif untuk mengumpulkan seluruh file dan parsing folder hierarkis + tanggal
         function scanDeepFiles(curDir, subRelPath) {
           const items = fs.readdirSync(curDir);
           for (const item of items) {
@@ -623,16 +623,36 @@ async function getVpsFiles(req, res) {
             if (stat.isDirectory()) {
               scanDeepFiles(itemPath, subRelPath ? `${subRelPath}/${item}` : item);
             } else if (stat.isFile()) {
+              let itemDate = null;
+              let itemFolder = baseFolder;
+              let itemRelPath = subRelPath ? `${subRelPath}/${item}` : item;
+
+              if (subRelPath) {
+                const subParts = subRelPath.split(/[/\\]+/).filter(Boolean);
+                if (subParts.length > 0) {
+                  const lastSegment = subParts[subParts.length - 1];
+                  if (/^\d{4}-\d{2}-\d{2}$/.test(lastSegment) || lastSegment === 'no-date') {
+                    itemDate = lastSegment;
+                    const folderSegments = subParts.slice(0, -1);
+                    itemFolder = folderSegments.length > 0 ? `${baseFolder}/${folderSegments.join('/')}` : baseFolder;
+                    itemRelPath = `${itemDate}/${item}`;
+                  } else {
+                    itemFolder = `${baseFolder}/${subParts.join('/')}`;
+                    itemRelPath = item;
+                  }
+                }
+              }
+
               list.push({
                 name: item,
                 isDirectory: false,
                 isFile: true,
-                date: /^\d{4}-\d{2}-\d{2}$/.test(subRelPath) ? subRelPath : null,
-                folder: baseFolder,
+                date: itemDate,
+                folder: itemFolder,
                 deviceId: activeDeviceId,
                 size: stat.size,
                 mtime: stat.mtime,
-                relativePath: subRelPath ? `${subRelPath}/${item}` : item
+                relativePath: itemRelPath
               });
             }
           }
@@ -738,7 +758,7 @@ async function getVpsFiles(req, res) {
 // 8. GET /api/vps/files/download - Mengunduh berkas fisik terkompresi langsung dari VPS disk
 function downloadVpsFile(req, res) {
   const folder = req.query.folder || 'DCIM/Camera';
-  const { deviceId, date, name } = req.query;
+  const { deviceId, date, name, relativePath } = req.query;
 
   if (!name) {
     return res.status(400).json({ error: 'Parameter "name" diperlukan.' });
@@ -759,23 +779,59 @@ function downloadVpsFile(req, res) {
   const uploadDir = process.env.UPLOAD_DIR || './uploads';
   const normFolder = (folder || '').replace(/^[/\\]+/, '').replace(/[/\\]+$/, '');
   const parts = normFolder.split(/[/\\]+/).filter(Boolean);
-  const rootPart = parts.length > 0 ? `${activeDeviceId}-${parts[0]}` : activeDeviceId;
+  const basePart = parts.length > 0 ? parts[0] : '';
+  const rootPart = basePart ? `${activeDeviceId}-${basePart}` : activeDeviceId;
   const remainingParts = parts.slice(1);
   const targetDir = path.resolve(uploadDir, rootPart, ...remainingParts);
+  const baseDeviceDir = path.resolve(uploadDir, rootPart);
 
-  // Cari file secara berurutan:
-  // 1. targetDir / date / name (jika date ada)
-  // 2. targetDir / name
-  // 3. cari di subfolder date mana saja di dalam targetDir
-  let filePath = null;
-  if (date && date !== 'undefined' && date !== 'null' && date !== 'no-date') {
-    const candidate = path.resolve(targetDir, date, name);
-    if (fs.existsSync(candidate)) filePath = candidate;
+  // Helper pencarian mendalam rekursif jika file berada di folder bersarang
+  function findFileDeep(dir, targetName, maxDepth = 4, curDepth = 0) {
+    if (curDepth > maxDepth || !fs.existsSync(dir)) return null;
+    try {
+      const entries = fs.readdirSync(dir);
+      for (const entry of entries) {
+        if (entry === 'all.json' || entry.startsWith('.')) continue;
+        const full = path.join(dir, entry);
+        const stat = fs.statSync(full);
+        if (stat.isFile() && entry === targetName) {
+          return full;
+        } else if (stat.isDirectory()) {
+          const found = findFileDeep(full, targetName, maxDepth, curDepth + 1);
+          if (found) return found;
+        }
+      }
+    } catch (_) { }
+    return null;
   }
+
+  // Cari file secara cerdas dan berurutan:
+  let filePath = null;
+
+  // 1. Cek langsung via relativePath jika disediakan
+  if (relativePath) {
+    const relClean = relativePath.replace(/^[/\\]+/, '');
+    const cand1 = path.resolve(targetDir, relClean);
+    if (fs.existsSync(cand1) && fs.statSync(cand1).isFile()) filePath = cand1;
+    if (!filePath) {
+      const cand2 = path.resolve(baseDeviceDir, relClean);
+      if (fs.existsSync(cand2) && fs.statSync(cand2).isFile()) filePath = cand2;
+    }
+  }
+
+  // 2. targetDir / date / name (jika date ada)
+  if (!filePath && date && date !== 'undefined' && date !== 'null' && date !== 'no-date') {
+    const candidate = path.resolve(targetDir, date, name);
+    if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) filePath = candidate;
+  }
+
+  // 3. targetDir / name
   if (!filePath) {
     const candidate = path.resolve(targetDir, name);
-    if (fs.existsSync(candidate)) filePath = candidate;
+    if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) filePath = candidate;
   }
+
+  // 4. cari di subfolder langsung di dalam targetDir (1 level)
   if (!filePath && fs.existsSync(targetDir)) {
     try {
       const subItems = fs.readdirSync(targetDir);
@@ -784,6 +840,29 @@ function downloadVpsFile(req, res) {
         if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) {
           filePath = candidate;
           break;
+        }
+      }
+    } catch (_) { }
+  }
+
+  // 5. Fallback pencarian rekursif di targetDir atau baseDeviceDir
+  if (!filePath && fs.existsSync(targetDir)) {
+    filePath = findFileDeep(targetDir, name);
+  }
+  if (!filePath && fs.existsSync(baseDeviceDir)) {
+    filePath = findFileDeep(baseDeviceDir, name);
+  }
+  // 6. Fallback global device uploads
+  if (!filePath && fs.existsSync(uploadDir)) {
+    try {
+      const allDirs = fs.readdirSync(uploadDir);
+      for (const d of allDirs) {
+        if (d.startsWith(`${activeDeviceId}-`)) {
+          const found = findFileDeep(path.join(uploadDir, d), name);
+          if (found) {
+            filePath = found;
+            break;
+          }
         }
       }
     } catch (_) { }
@@ -812,7 +891,7 @@ function downloadVpsFile(req, res) {
 // 9. DELETE /api/vps/files - Menghapus berkas fisik terkompresi dari VPS disk
 async function deleteVpsFile(req, res) {
   const folder = req.query.folder || 'DCIM/Camera';
-  const { deviceId, date, name } = req.query;
+  const { deviceId, date, name, relativePath } = req.query;
 
   if (!name) {
     return res.status(400).json({ error: 'Parameter "name" diperlukan.' });
@@ -826,19 +905,58 @@ async function deleteVpsFile(req, res) {
   const uploadDir = process.env.UPLOAD_DIR || './uploads';
   const normFolder = (folder || '').replace(/^[/\\]+/, '').replace(/[/\\]+$/, '');
   const parts = normFolder.split(/[/\\]+/).filter(Boolean);
-  const rootPart = parts.length > 0 ? `${activeDeviceId}-${parts[0]}` : activeDeviceId;
+  const basePart = parts.length > 0 ? parts[0] : '';
+  const rootPart = basePart ? `${activeDeviceId}-${basePart}` : activeDeviceId;
   const remainingParts = parts.slice(1);
   const targetDir = path.resolve(uploadDir, rootPart, ...remainingParts);
+  const baseDeviceDir = path.resolve(uploadDir, rootPart);
+
+  // Helper pencarian mendalam rekursif
+  function findFileDeep(dir, targetName, maxDepth = 4, curDepth = 0) {
+    if (curDepth > maxDepth || !fs.existsSync(dir)) return null;
+    try {
+      const entries = fs.readdirSync(dir);
+      for (const entry of entries) {
+        if (entry === 'all.json' || entry.startsWith('.')) continue;
+        const full = path.join(dir, entry);
+        const stat = fs.statSync(full);
+        if (stat.isFile() && entry === targetName) {
+          return full;
+        } else if (stat.isDirectory()) {
+          const found = findFileDeep(full, targetName, maxDepth, curDepth + 1);
+          if (found) return found;
+        }
+      }
+    } catch (_) { }
+    return null;
+  }
 
   let filePath = null;
-  if (date && date !== 'undefined' && date !== 'null' && date !== 'no-date') {
-    const candidate = path.resolve(targetDir, date, name);
-    if (fs.existsSync(candidate)) filePath = candidate;
+
+  // 1. Cek langsung via relativePath
+  if (relativePath) {
+    const relClean = relativePath.replace(/^[/\\]+/, '');
+    const cand1 = path.resolve(targetDir, relClean);
+    if (fs.existsSync(cand1) && fs.statSync(cand1).isFile()) filePath = cand1;
+    if (!filePath) {
+      const cand2 = path.resolve(baseDeviceDir, relClean);
+      if (fs.existsSync(cand2) && fs.statSync(cand2).isFile()) filePath = cand2;
+    }
   }
+
+  // 2. targetDir / date / name (jika date ada)
+  if (!filePath && date && date !== 'undefined' && date !== 'null' && date !== 'no-date') {
+    const candidate = path.resolve(targetDir, date, name);
+    if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) filePath = candidate;
+  }
+
+  // 3. targetDir / name
   if (!filePath) {
     const candidate = path.resolve(targetDir, name);
-    if (fs.existsSync(candidate)) filePath = candidate;
+    if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) filePath = candidate;
   }
+
+  // 4. cari di subfolder langsung di dalam targetDir (1 level)
   if (!filePath && fs.existsSync(targetDir)) {
     try {
       const subItems = fs.readdirSync(targetDir);
@@ -847,6 +965,28 @@ async function deleteVpsFile(req, res) {
         if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) {
           filePath = candidate;
           break;
+        }
+      }
+    } catch (_) { }
+  }
+
+  // 5. Fallback pencarian rekursif
+  if (!filePath && fs.existsSync(targetDir)) {
+    filePath = findFileDeep(targetDir, name);
+  }
+  if (!filePath && fs.existsSync(baseDeviceDir)) {
+    filePath = findFileDeep(baseDeviceDir, name);
+  }
+  if (!filePath && fs.existsSync(uploadDir)) {
+    try {
+      const allDirs = fs.readdirSync(uploadDir);
+      for (const d of allDirs) {
+        if (d.startsWith(`${activeDeviceId}-`)) {
+          const found = findFileDeep(path.join(uploadDir, d), name);
+          if (found) {
+            filePath = found;
+            break;
+          }
         }
       }
     } catch (_) { }

@@ -4,14 +4,14 @@ const apiKey = process.env.API_KEY || 'super-secret-key-123';
 const JWT_SECRET = process.env.JWT_SECRET || 'kasir-vps-secure-jwt-key-2026';
 
 function authenticateApiKey(req, res, next) {
-  const token = req.headers['authorization']?.split(' ')[1] || req.query.token;
+  const token = req.headers['authorization']?.split(' ')[1] || req.headers['x-api-key'] || req.query.token || req.query.apiKey;
 
   if (!token) {
     return res.status(401).json({ error: 'Unauthorized: Token is missing' });
   }
 
   // 1. Cek apakah token adalah static API Key (untuk mobile / scripts)
-  if (token === apiKey) {
+  if (token === apiKey || req.query.apiKey === apiKey || req.headers['x-api-key'] === apiKey) {
     req.authType = 'apikey';
     return next();
   }
